@@ -1,0 +1,20 @@
+## Interface: 20504
+## Title: GermanysAllStar
+## Notes: Germany's AllStar Gilden-Toolkit - Alle Gilden-Apps an einem Ort.
+## Author: GermanyAllStar
+## Version: 2.0.0
+## SavedVariables: GermanysAllStarDB GuildStockPlannerDB
+
+Core.lua
+HubUI.lua
+GuildStockPlanner\DB.lua
+GuildStockPlanner\Scanner.lua
+GuildStockPlanner\Calculator.lua
+GuildStockPlanner\ExportImport.lua
+GuildStockPlanner\Sync.lua
+GuildStockPlanner\UI.lua
+Raidplaner\RaidData.lua
+Raidplaner\DB.lua
+Raidplaner\Sync.lua
+Raidplaner\UI.lua
+GuildStocks\UI.lua
