@@ -67,13 +67,8 @@ local function CreateBtn(parent, w, h, label, onClick)
         tile = true, tileSize = 16, edgeSize = 12,
         insets = { left = 2, right = 2, top = 2, bottom = 2 },
     })
-    btn:SetBackdropColor(0.11, 0.12, 0.18, 0.96)
-    btn:SetBackdropBorderColor(0.35, 0.38, 0.48, 0.9)
-
-    local shade = btn:CreateTexture(nil, "BACKGROUND", nil, 0)
-    shade:SetPoint("TOPLEFT", 1, -1)
-    shade:SetPoint("BOTTOMRIGHT", -1, 1)
-    shade:SetColorTexture(0, 0, 0, 0.22)
+    btn:SetBackdropColor(0.15, 0.15, 0.22, 1)
+    btn:SetBackdropBorderColor(0.5, 0.5, 0.5, 1)
     local hl = btn:CreateTexture(nil, "HIGHLIGHT")
     hl:SetAllPoints()
     hl:SetColorTexture(1, 1, 1, 0.08)
@@ -82,14 +77,6 @@ local function CreateBtn(parent, w, h, label, onClick)
     txt:SetText(label)
     btn.label = txt
     btn:SetScript("OnClick", onClick)
-    btn:SetScript("OnEnter", function(self)
-        self:SetBackdropColor(0.15, 0.17, 0.24, 1)
-        self:SetBackdropBorderColor(0.55, 0.58, 0.72, 1)
-    end)
-    btn:SetScript("OnLeave", function(self)
-        self:SetBackdropColor(0.11, 0.12, 0.18, 0.96)
-        self:SetBackdropBorderColor(0.35, 0.38, 0.48, 0.9)
-    end)
     return btn
 end
 
@@ -104,14 +91,8 @@ local function CreateAppCard(parent, index, data)
     card:SetSize(HUB_W - 32, 84)
     card:SetPoint("TOPLEFT", 16, y)
     card:SetBackdrop(BD_CARD)
-    card:SetBackdropColor(0.07, 0.08, 0.12, 0.95)
-    card:SetBackdropBorderColor(data.color[1] * 0.9, data.color[2] * 0.9, data.color[3] * 0.9, 0.72)
-
-    local glass = card:CreateTexture(nil, "ARTWORK", nil, 0)
-    glass:SetPoint("TOPLEFT", 1, -1)
-    glass:SetPoint("TOPRIGHT", -1, -1)
-    glass:SetHeight(22)
-    glass:SetColorTexture(1, 1, 1, 0.04)
+    card:SetBackdropColor(0.08, 0.08, 0.12, 0.92)
+    card:SetBackdropBorderColor(data.color[1], data.color[2], data.color[3], 0.6)
 
     -- Hover
     local hl = card:CreateTexture(nil, "HIGHLIGHT")
@@ -143,7 +124,7 @@ local function CreateAppCard(parent, index, data)
 
     -- Pfeil
     card.arrow = card:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
-    card.arrow:SetText("|cff8fa4cc»|r")
+    card.arrow:SetText("|cff888888>|r")
     card.arrow:SetPoint("RIGHT", -16, 0)
 
     -- Lock-Overlay (fuer gesperrte Apps)
@@ -181,7 +162,7 @@ local function RefreshAppCards()
         if hasAccess then
             card.lockOverlay:Hide()
             card.lockText:Hide()
-            card.arrow:SetText("|cff8fa4cc»|r")
+            card.arrow:SetText("|cff888888>|r")
             card.statusText:SetText("")
         else
             card.lockOverlay:Show()
@@ -540,8 +521,8 @@ function Hub:Init()
     hubFrame:SetPoint("CENTER")
     hubFrame:SetFrameStrata("HIGH")
     hubFrame:SetBackdrop(BD_MAIN)
-    hubFrame:SetBackdropColor(0.03, 0.04, 0.07, 0.98)
-    hubFrame:SetBackdropBorderColor(0.5, 0.52, 0.65, 1)
+    hubFrame:SetBackdropColor(0.04, 0.04, 0.07, 0.97)
+    hubFrame:SetBackdropBorderColor(0.55, 0.45, 0.2, 1)
     MakeMovable(hubFrame)
     hubFrame:Hide()
     tinsert(UISpecialFrames, "GASHubFrame")
@@ -570,7 +551,7 @@ function Hub:Init()
     sep:SetHeight(1)
     sep:SetPoint("TOPLEFT", 12, -56)
     sep:SetPoint("TOPRIGHT", -12, -56)
-    sep:SetColorTexture(0.5, 0.55, 0.7, 0.35)
+    sep:SetColorTexture(0.5, 0.4, 0.15, 0.5)
 
     -----------------------------------------------------------------------
     -- App: GuildStockPlanner

@@ -102,18 +102,9 @@ local function CreateLabel(parent, fontObj, text, ...)
 end
 
 local function CreateBtn(parent, w, h, text, onClick)
-    if THEME and THEME.CreateButtonRed then
-        return THEME:CreateButtonRed(parent, w, h, text, onClick)
-    end
-    local btn = CreateFrame("Button", nil, parent, "BackdropTemplate")
+    local btn = CreateFrame("Button", nil, parent, "UIPanelButtonTemplate")
     btn:SetSize(w, h)
-    btn:SetBackdrop(BD_MAIN)
-    btn:SetBackdropColor(0.35, 0.07, 0.07, 0.98)
-    btn:SetBackdropBorderColor(0.75, 0.30, 0.18, 0.95)
-    local txt = btn:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-    txt:SetPoint("CENTER")
-    txt:SetText(text)
-    btn._txt = txt
+    btn:SetText(text)
     if onClick then btn:SetScript("OnClick", onClick) end
     return btn
 end
@@ -1380,8 +1371,7 @@ function RP:Init()
     rpFrame:SetSize(MAIN_W, MAIN_H)
     rpFrame:SetPoint("CENTER")
     rpFrame:SetFrameStrata("HIGH")
-    rpFrame:SetFrameLevel(10)
-    ApplyBackdrop(rpFrame, BD_MAIN, 0.03, 0.04, 0.07, 0.98, 0.5, 0.55, 0.65)
+    ApplyBackdrop(rpFrame, BD_MAIN, 0.04, 0.04, 0.07, 0.96, 0.55, 0.45, 0.2)
     MakeMovable(rpFrame)
     rpFrame:Hide()
     tinsert(UISpecialFrames, "GASRaidplanerFrame")
@@ -1437,7 +1427,7 @@ function RP:Init()
     contentInset = CreateFrame("Frame", nil, rpFrame, "BackdropTemplate")
     contentInset:SetPoint("TOPLEFT", INSET_PAD, -72)
     contentInset:SetPoint("BOTTOMRIGHT", -INSET_PAD, 28)
-    ApplyBackdrop(contentInset, BD_INSET, 0.05, 0.06, 0.1, 0.88, 0.35, 0.42, 0.5)
+    ApplyBackdrop(contentInset, BD_INSET, 0.07, 0.07, 0.1, 0.85, 0.35, 0.35, 0.35)
 
     -- Kalender-Content (innerhalb Inset)
     calendarContent = CreateFrame("Frame", nil, contentInset)
