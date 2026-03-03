@@ -79,6 +79,81 @@ local function DetermineInitialWeekStart()
     return fallback
 end
 
+local function CollectRaidFilterOptionsForWeek(weekStartTs)
+    local fromTs, toTs = WeekRangeByStart(weekStartTs)
+    local byKey = {}
+
+    for _, raid in pairs(ADDON.RaidplanerDB:GetRaids()) do
+        local ts = ParseDate(raid.date)
+        if ts and ts >= fromTs and ts <= toTs and raid.raidKey and raid.raidKey ~= "" then
+            byKey[raid.raidKey] = true
+        end
+    end
+
+    local opts = {}
+    for raidKey in pairs(byKey) do
+        local def = ADDON.RaidData:GetByKey(raidKey)
+        opts[#opts + 1] = {
+            key = raidKey,
+            text = (def and (def.short or def.name)) or raidKey,
+            order = ADDON.RaidData:GetIndex(raidKey) or 999,
+        }
+    end
+    table.sort(opts, function(a, b)
+        if a.order ~= b.order then return a.order < b.order end
+        return a.text < b.text
+    end)
+    return opts
+end
+
+local function RefreshPlannerFilterDropdownOptions()
+    if not plannerFrame or not plannerFrame.filterDD then return end
+
+    plannerFrame.filterOptions = CollectRaidFilterOptionsForWeek(plannerFrame.weekStartTs)
+    local hasCurrentFilter = (plannerFrame.raidFilter == "ALL")
+    if not hasCurrentFilter then
+        for _, opt in ipairs(plannerFrame.filterOptions) do
+            if opt.key == plannerFrame.raidFilter then
+                hasCurrentFilter = true
+                break
+            end
+        end
+    end
+    if not hasCurrentFilter then
+        plannerFrame.raidFilter = "ALL"
+    end
+
+    UIDropDownMenu_Initialize(plannerFrame.filterDD, function(_, level)
+        local function Add(name, key)
+            local info = UIDropDownMenu_CreateInfo()
+            info.text = name
+            info.func = function()
+                plannerFrame.raidFilter = key
+                UIDropDownMenu_SetText(plannerFrame.filterDD, name)
+                RP:RefreshPlanner()
+                CloseDropDownMenus()
+            end
+            UIDropDownMenu_AddButton(info, level)
+        end
+
+        Add("Alle (Woche)", "ALL")
+        for _, opt in ipairs(plannerFrame.filterOptions) do
+            Add(opt.text, opt.key)
+        end
+    end)
+
+    local label = "Alle (Woche)"
+    if plannerFrame.raidFilter ~= "ALL" then
+        for _, opt in ipairs(plannerFrame.filterOptions) do
+            if opt.key == plannerFrame.raidFilter then
+                label = opt.text
+                break
+            end
+        end
+    end
+    UIDropDownMenu_SetText(plannerFrame.filterDD, label)
+end
+
 local function EnsureGhost()
     if dragGhost then return end
     dragGhost = CreateFrame("Frame", nil, UIParent, "BackdropTemplate")
@@ -251,6 +326,7 @@ end
 
 function RP:RefreshPlanner()
     if not plannerFrame or not plannerFrame:IsShown() then return end
+    RefreshPlannerFilterDropdownOptions()
     self:RebuildPlannerData()
     local pd = plannerFrame.planData or { rows = {}, columns = {} }
 
@@ -367,7 +443,7 @@ function RP:RefreshPlanner()
     plannerFrame.hScroll:SetMinMaxValues(0, maxH)
     if plannerFrame.hScroll:GetValue() > maxH then plannerFrame.hScroll:SetValue(maxH) end
 
-    plannerFrame.weekLabel:SetText("|cffffd100Woche:|r " .. date("%d.%m.%Y", plannerFrame.weekStartTs) .. " - " .. date("%d.%m.%Y", plannerFrame.weekStartTs + 6 * 86400))
+    plannerFrame.weekLabel:SetText("|cffffd100Mi-Di:|r " .. date("%d.%m.%Y", plannerFrame.weekStartTs) .. " - " .. date("%d.%m.%Y", plannerFrame.weekStartTs + 6 * 86400))
 end
 
 function RP:OpenPlanner()
@@ -529,22 +605,7 @@ function RP:EnsurePlannerFrame()
         RP:RefreshPlanner()
     end)
 
-    UIDropDownMenu_Initialize(plannerFrame.filterDD, function(_, level)
-        local function Add(name, key)
-            local info = UIDropDownMenu_CreateInfo()
-            info.text = name
-            info.func = function()
-                plannerFrame.raidFilter = key
-                UIDropDownMenu_SetText(plannerFrame.filterDD, name)
-                RP:RefreshPlanner()
-                CloseDropDownMenus()
-            end
-            UIDropDownMenu_AddButton(info, level)
-        end
-        Add("Alle", "ALL")
-        for _, r in ipairs(ADDON.RaidData.raids) do Add(r.short or r.name, r.key) end
-    end)
-    UIDropDownMenu_SetText(plannerFrame.filterDD, "Alle")
+    RefreshPlannerFilterDropdownOptions()
 
     plannerFrame:SetScript("OnMouseUp", function()
         plannerFrame.dragState = nil
