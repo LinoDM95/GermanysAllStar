@@ -1423,6 +1423,13 @@ function RP:Init()
     end)
     todayBtn:SetPoint("LEFT", nextBtn, "RIGHT", 8, 0)
 
+    local plannerBtn = CreateBtn(rpFrame, 90, 24, "|cffff4444Planen|r", function()
+        RP:OpenPlanner()
+    end)
+    plannerBtn:SetPoint("LEFT", todayBtn, "RIGHT", 8, 0)
+    plannerBtn:SetShown(self:CanManageRaids())
+    self.plannerBtn = plannerBtn
+
     -- Content Inset
     contentInset = CreateFrame("Frame", nil, rpFrame, "BackdropTemplate")
     contentInset:SetPoint("TOPLEFT", INSET_PAD, -72)
@@ -1482,6 +1489,9 @@ function RP:ToggleMainFrame()
         return
     end
     ADDON.DB:EnsureProfile()
+    if self.plannerBtn then
+        self.plannerBtn:SetShown(self:CanManageRaids())
+    end
     self.rpFrame:Show()
     self:RefreshCalendar()
     -- Sync anfragen

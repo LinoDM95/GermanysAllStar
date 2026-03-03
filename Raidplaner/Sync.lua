@@ -434,8 +434,9 @@ end
 ---------------------------------------------------------------------------
 
 function RSync:RefreshUI()
-    if ADDON.Raidplaner and ADDON.Raidplaner.rpFrame
-        and ADDON.Raidplaner.rpFrame:IsShown() then
+    if not ADDON.Raidplaner then return end
+
+    if ADDON.Raidplaner.rpFrame and ADDON.Raidplaner.rpFrame:IsShown() then
         ADDON.Raidplaner:RefreshCalendar()
         -- Wenn Detail-View offen ist, auch aktualisieren
         if ADDON.Raidplaner.detailFrame
@@ -443,5 +444,11 @@ function RSync:RefreshUI()
             and ADDON.Raidplaner.detailFrame.currentRaidId then
             ADDON.Raidplaner:ShowRaidDetail(ADDON.Raidplaner.detailFrame.currentRaidId)
         end
+    end
+
+    if ADDON.Raidplaner.plannerFrame
+        and ADDON.Raidplaner.plannerFrame:IsShown()
+        and ADDON.Raidplaner.RefreshPlanner then
+        ADDON.Raidplaner:RefreshPlanner()
     end
 end
