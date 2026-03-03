@@ -1,0 +1,522 @@
+local _, ADDON = ...
+
+local RP = ADDON.Raidplaner
+if not RP then return end
+
+local ROLE_COL_W, NAME_COL_W = 80, 150
+local RAID_COL_W, ROW_H = 120, 22
+local HEADER_H, GAP = 22, 4
+
+local plannerFrame
+local pRows, pCells, pHeaders = {}, {}, {}
+local dragGhost
+
+local function ParseDate(dateStr)
+    local y, m, d = (dateStr or ""):match("^(%d%d%d%d)%-(%d%d)%-(%d%d)$")
+    if not y then return nil end
+    return time({ year = tonumber(y), month = tonumber(m), day = tonumber(d), hour = 12 })
+end
+
+local function YMD(ts)
+    return date("%Y-%m-%d", ts)
+end
+
+local function WeekStartFromDate(dateStr)
+    local ts = ParseDate(dateStr)
+    if not ts then return nil end
+    local w = tonumber(date("%w", ts)) or 0 -- 0=So,3=Mi
+    local offset = (w - 3) % 7
+    return ts - offset * 86400
+end
+
+local function WeekRangeByStart(weekStartTs)
+    return weekStartTs, weekStartTs + 6 * 86400
+end
+
+local function FormatHeadDate(dateStr)
+    local y, m, d = (dateStr or ""):match("^(%d%d%d%d)%-(%d%d)%-(%d%d)$")
+    if not y then return dateStr or "?" end
+    return string.format("%s.%s.%s", d, m, string.sub(y, 3, 4))
+end
+
+local function GetSignupRole(signup)
+    local role = signup.role or ""
+    if role == "" and signup.class and signup.spec and signup.spec ~= "" then
+        local specInfo = ADDON.RaidData:GetSpecInfo(signup.class, signup.spec)
+        if specInfo then role = specInfo.role end
+    end
+    if role == "" then role = "DD" end
+    return role
+end
+
+local function EnsureGhost()
+    if dragGhost then return end
+    dragGhost = CreateFrame("Frame", nil, UIParent, "BackdropTemplate")
+    dragGhost:SetSize(170, 22)
+    dragGhost:SetFrameStrata("TOOLTIP")
+    dragGhost:SetBackdrop({
+        bgFile = "Interface\\Tooltips\\UI-Tooltip-Background",
+        edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
+        tile = true, tileSize = 16, edgeSize = 12,
+        insets = { left = 3, right = 3, top = 3, bottom = 3 },
+    })
+    dragGhost:SetBackdropColor(0, 0, 0, 0.95)
+    dragGhost.text = dragGhost:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    dragGhost.text:SetPoint("CENTER")
+    dragGhost:Hide()
+    dragGhost:SetScript("OnUpdate", function(self)
+        if not plannerFrame or not plannerFrame.dragState then self:Hide() return end
+        local scale = UIParent:GetEffectiveScale()
+        local x, y = GetCursorPosition()
+        self:ClearAllPoints()
+        self:SetPoint("BOTTOMLEFT", UIParent, "BOTTOMLEFT", x / scale + 14, y / scale - 14)
+    end)
+end
+
+function RP:RebuildPlannerData()
+    if not plannerFrame then return end
+    local weekStartTs = plannerFrame.weekStartTs
+    local fromTs, toTs = WeekRangeByStart(weekStartTs)
+    local raidFilter = plannerFrame.raidFilter
+
+    local columns, rows = {}, {}
+    local rowByKey = {}
+
+    for _, raid in pairs(ADDON.RaidplanerDB:GetRaids()) do
+        local ts = ParseDate(raid.date)
+        if ts and ts >= fromTs and ts <= toTs and (not raidFilter or raidFilter == "ALL" or raid.raidKey == raidFilter) then
+            columns[#columns + 1] = raid
+        end
+    end
+
+    table.sort(columns, function(a, b)
+        if a.date ~= b.date then return (a.date or "") < (b.date or "") end
+        return (a.time or "") < (b.time or "")
+    end)
+
+    local roleOrder = { TANK = 1, HEAL = 2, DD = 3 }
+    for _, raid in ipairs(columns) do
+        for name, s in pairs(raid.signups or {}) do
+            local roleKey = GetSignupRole(s)
+            local key = name .. "#" .. roleKey
+            if not rowByKey[key] then
+                local cc = RAID_CLASS_COLORS and RAID_CLASS_COLORS[s.class]
+                rowByKey[key] = {
+                    key = key, name = name, class = s.class, roleKey = roleKey,
+                    roleOrder = roleOrder[roleKey] or 99,
+                    classColor = cc,
+                }
+                rows[#rows + 1] = rowByKey[key]
+            end
+        end
+    end
+
+    table.sort(rows, function(a, b)
+        if a.roleOrder ~= b.roleOrder then return a.roleOrder < b.roleOrder end
+        return a.name < b.name
+    end)
+
+    plannerFrame.planData = { columns = columns, rows = rows }
+end
+
+local function MakeCell(parent)
+    local b = CreateFrame("Button", nil, parent, "BackdropTemplate")
+    b:SetSize(RAID_COL_W - 2, ROW_H - 2)
+    b:SetBackdrop({
+        bgFile = "Interface\\Tooltips\\UI-Tooltip-Background",
+        edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
+        tile = true, tileSize = 16, edgeSize = 8,
+        insets = { left = 2, right = 2, top = 2, bottom = 2 },
+    })
+    b.label = b:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    b.label:SetPoint("CENTER")
+    b.raidId, b.rowKey = nil, nil
+    return b
+end
+
+local function ClearDragHighlights()
+    if not plannerFrame then return end
+    for _, c in ipairs(pCells) do
+        c:SetAlpha(1)
+        c:SetBackdropBorderColor(0.3, 0.3, 0.3, 0.35)
+        c.validDrop = nil
+    end
+end
+
+local function BuildDragHighlights()
+    if not plannerFrame or not plannerFrame.dragState then return end
+    local d = plannerFrame.dragState
+    local pd = plannerFrame.planData
+    local onePerType = true
+    for _, c in ipairs(pCells) do
+        c.validDrop = false
+        c:SetAlpha(0.25)
+        local raid = c.raidObj
+        if c.rowKey == d.rowKey and raid and raid.signups and raid.signups[d.name] then
+            local s = raid.signups[d.name]
+            if GetSignupRole(s) == d.roleKey then
+                c.validDrop = true
+                if onePerType and raid.raidKey then
+                    for _, other in ipairs(pd.columns or {}) do
+                        if other.id ~= raid.id and other.raidKey == raid.raidKey then
+                            local os = other.signups and other.signups[d.name]
+                            if os and os.confirmed then
+                                c.validDrop = false
+                                break
+                            end
+                        end
+                    end
+                end
+            end
+        end
+        if c.validDrop then
+            c:SetAlpha(1)
+            c:SetBackdropBorderColor(0.95, 0.85, 0.2, 0.8)
+        else
+            c:SetBackdropBorderColor(0.2, 0.2, 0.2, 0.25)
+        end
+    end
+end
+
+function RP:PlannerAssignPlayerToRaid(name, roleKey, raidId)
+    local raid = ADDON.RaidplanerDB:GetRaid(raidId)
+    if not raid or not raid.signups or not raid.signups[name] then return end
+    local s = raid.signups[name]
+    if GetSignupRole(s) ~= roleKey then return end
+
+    local wasConfirmed = s.confirmed
+    if wasConfirmed then
+        s.confirmed = false
+    else
+        s.confirmed = true
+        s.status = "YES"
+    end
+    s.updatedAt = time()
+
+    if s.confirmed then
+        local weekStart = WeekStartFromDate(raid.date)
+        local fromTs, toTs = WeekRangeByStart(weekStart)
+        for _, other in pairs(ADDON.RaidplanerDB:GetRaids()) do
+            local ots = ParseDate(other.date)
+            if other.id ~= raid.id and ots and ots >= fromTs and ots <= toTs and other.raidKey == raid.raidKey then
+                local os = other.signups and other.signups[name]
+                if os and os.confirmed then
+                    os.confirmed = false
+                    os.updatedAt = s.updatedAt
+                    ADDON.RaidplanerDB:SaveRaid(other)
+                    ADDON.RaidplanerSync:BroadcastSignup(other.id, os)
+                end
+            end
+        end
+    end
+
+    ADDON.RaidplanerDB:SaveRaid(raid)
+    ADDON.RaidplanerSync:BroadcastSignup(raidId, s)
+    self:RefreshCalendar()
+    if self.detailFrame and self.detailFrame:IsShown() and self.detailFrame.currentRaidId then
+        self:RefreshRoster(self.detailFrame.currentRaidId)
+    end
+    self:RefreshPlanner()
+end
+
+function RP:RefreshPlanner()
+    if not plannerFrame or not plannerFrame:IsShown() then return end
+    self:RebuildPlannerData()
+    local pd = plannerFrame.planData or { rows = {}, columns = {} }
+
+    for _, h in ipairs(pHeaders) do h:Hide() end
+    for _, r in ipairs(pRows) do r:Hide() end
+    for _, c in ipairs(pCells) do c:Hide() end
+
+    local leftW = ROLE_COL_W + NAME_COL_W
+    local rightW = math.max(1, #pd.columns * RAID_COL_W)
+
+    plannerFrame.rightHeaderChild:SetSize(rightW, HEADER_H)
+    plannerFrame.rightContent:SetSize(rightW, math.max(1, #pd.rows * ROW_H))
+    plannerFrame.leftContent:SetSize(leftW, math.max(1, #pd.rows * ROW_H))
+
+    for i, raid in ipairs(pd.columns) do
+        local h = pHeaders[i]
+        if not h then
+            h = CreateFrame("Frame", nil, plannerFrame.rightHeaderChild)
+            h:SetSize(RAID_COL_W, HEADER_H)
+            h.t = h:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+            h.t:SetPoint("CENTER")
+            pHeaders[i] = h
+        end
+        h:SetPoint("TOPLEFT", (i - 1) * RAID_COL_W, 0)
+        local def = ADDON.RaidData:GetByKey(raid.raidKey)
+        local short = def and def.short or raid.raidKey or "?"
+        h.t:SetText("|cffffd100" .. short .. "|r\n|cffcccccc" .. FormatHeadDate(raid.date) .. "|r")
+        h:Show()
+    end
+
+    for rowIdx, rowData in ipairs(pd.rows) do
+        local row = pRows[rowIdx]
+        if not row then
+            row = CreateFrame("Button", nil, plannerFrame.leftContent, "BackdropTemplate")
+            row:SetSize(leftW, ROW_H)
+            row.role = row:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+            row.role:SetPoint("LEFT", 4, 0)
+            row.role:SetWidth(ROLE_COL_W - 8)
+            row.role:SetJustifyH("LEFT")
+            row.name = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+            row.name:SetPoint("LEFT", ROLE_COL_W + 4, 0)
+            row.name:SetWidth(NAME_COL_W - 8)
+            row.name:SetJustifyH("LEFT")
+            row:SetScript("OnMouseDown", function(self, btn)
+                if btn ~= "LeftButton" then return end
+                if not RP:CanManageRaids() then return end
+                plannerFrame.dragState = {
+                    name = self.playerName,
+                    roleKey = self.roleKey,
+                    rowKey = self.rowKey,
+                }
+                EnsureGhost()
+                dragGhost.text:SetText(self.playerName .. " (" .. self.roleKey .. ")")
+                dragGhost:Show()
+                BuildDragHighlights()
+            end)
+            pRows[rowIdx] = row
+        end
+        row:SetPoint("TOPLEFT", 0, -(rowIdx - 1) * ROW_H)
+        row.playerName = rowData.name
+        row.roleKey = rowData.roleKey
+        row.rowKey = rowData.key
+        local roleInfo = ADDON.RaidData:GetRoleInfo(rowData.roleKey)
+        row.role:SetText("|cffffd100" .. (roleInfo and roleInfo.name or rowData.roleKey) .. "|r")
+        if rowData.classColor then
+            row.name:SetText(string.format("|cff%02x%02x%02x%s|r", rowData.classColor.r * 255, rowData.classColor.g * 255, rowData.classColor.b * 255, rowData.name))
+        else
+            row.name:SetText(rowData.name)
+        end
+        row:Show()
+
+        for colIdx, raid in ipairs(pd.columns) do
+            local idx = (rowIdx - 1) * math.max(1, #pd.columns) + colIdx
+            local cell = pCells[idx]
+            if not cell then
+                cell = MakeCell(plannerFrame.rightContent)
+                cell:SetScript("OnMouseUp", function(self)
+                    if not plannerFrame.dragState then return end
+                    if self.validDrop then
+                        RP:PlannerAssignPlayerToRaid(plannerFrame.dragState.name, plannerFrame.dragState.roleKey, self.raidId)
+                    end
+                    plannerFrame.dragState = nil
+                    if dragGhost then dragGhost:Hide() end
+                    ClearDragHighlights()
+                end)
+                pCells[idx] = cell
+            end
+            cell:SetPoint("TOPLEFT", (colIdx - 1) * RAID_COL_W + 1, -(rowIdx - 1) * ROW_H - 1)
+            cell.raidId = raid.id
+            cell.raidObj = raid
+            cell.rowKey = rowData.key
+
+            local s = raid.signups and raid.signups[rowData.name]
+            local txt = ""
+            if s and GetSignupRole(s) == rowData.roleKey then
+                local specInfo = ADDON.RaidData:GetSpecInfo(s.class, s.spec or "")
+                txt = "|cff888888" .. ((specInfo and specInfo.name) or rowData.roleKey) .. "|r"
+                if s.confirmed then
+                    txt = "|cff44ff44GEPLANT|r"
+                end
+            end
+            cell.label:SetText(txt)
+            cell:SetBackdropColor(0.08, 0.08, 0.12, 0.5)
+            cell:SetBackdropBorderColor(0.3, 0.3, 0.3, 0.35)
+            cell:Show()
+        end
+    end
+
+    local maxV = math.max(0, (#pd.rows * ROW_H) - plannerFrame.contentH)
+    plannerFrame.vScroll:SetMinMaxValues(0, maxV)
+    if plannerFrame.vScroll:GetValue() > maxV then plannerFrame.vScroll:SetValue(maxV) end
+
+    local maxH = math.max(0, rightW - plannerFrame.rightW)
+    plannerFrame.hScroll:SetMinMaxValues(0, maxH)
+    if plannerFrame.hScroll:GetValue() > maxH then plannerFrame.hScroll:SetValue(maxH) end
+
+    plannerFrame.weekLabel:SetText("|cffffd100Woche:|r " .. date("%d.%m.%Y", plannerFrame.weekStartTs) .. " - " .. date("%d.%m.%Y", plannerFrame.weekStartTs + 6 * 86400))
+end
+
+function RP:OpenPlanner()
+    if not self:CanManageRaids() then
+        ADDON:Print("Nur GM/Raidlead darf den Planer nutzen.")
+        return
+    end
+    if not plannerFrame then self:EnsurePlannerFrame() end
+    plannerFrame:Show()
+    self:RefreshPlanner()
+end
+
+function RP:EnsurePlannerFrame()
+    if plannerFrame then return end
+    plannerFrame = CreateFrame("Frame", "GASRPPlannerFrame", UIParent, "BackdropTemplate")
+    plannerFrame:SetSize(1180, 680)
+    plannerFrame:SetPoint("CENTER")
+    plannerFrame:SetFrameStrata("TOOLTIP")
+    plannerFrame:SetFrameLevel(30)
+    plannerFrame:SetBackdrop({
+        bgFile = "Interface\\Tooltips\\UI-Tooltip-Background",
+        edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
+        tile = true, tileSize = 16, edgeSize = 16,
+        insets = { left = 4, right = 4, top = 4, bottom = 4 },
+    })
+    plannerFrame:SetBackdropColor(0.04, 0.04, 0.07, 0.97)
+    plannerFrame:SetMovable(true)
+    plannerFrame:EnableMouse(true)
+    plannerFrame:RegisterForDrag("LeftButton")
+    plannerFrame:SetScript("OnDragStart", plannerFrame.StartMoving)
+    plannerFrame:SetScript("OnDragStop", plannerFrame.StopMovingOrSizing)
+    plannerFrame:Hide()
+    tinsert(UISpecialFrames, "GASRPPlannerFrame")
+
+    local title = plannerFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+    title:SetPoint("TOPLEFT", 14, -12)
+    title:SetText("|cffffd100Raid Planer|r")
+
+    local close = CreateFrame("Button", nil, plannerFrame, "UIPanelCloseButton")
+    close:SetPoint("TOPRIGHT", -2, -2)
+
+    local prev = CreateFrame("Button", nil, plannerFrame, "UIPanelButtonTemplate")
+    prev:SetSize(28, 22)
+    prev:SetPoint("TOPLEFT", 12, -42)
+    prev:SetText("<")
+
+    plannerFrame.weekLabel = plannerFrame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    plannerFrame.weekLabel:SetPoint("LEFT", prev, "RIGHT", 8, 0)
+    plannerFrame.weekLabel:SetWidth(260)
+    plannerFrame.weekLabel:SetJustifyH("LEFT")
+
+    local nextB = CreateFrame("Button", nil, plannerFrame, "UIPanelButtonTemplate")
+    nextB:SetSize(28, 22)
+    nextB:SetPoint("LEFT", plannerFrame.weekLabel, "RIGHT", 8, 0)
+    nextB:SetText(">")
+
+    local ddLabel = plannerFrame:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+    ddLabel:SetPoint("LEFT", nextB, "RIGHT", 10, 0)
+    ddLabel:SetText("Raidfilter:")
+
+    plannerFrame.filterDD = CreateFrame("Frame", "GASRPPlannerFilterDD", plannerFrame, "UIDropDownMenuTemplate")
+    plannerFrame.filterDD:SetPoint("LEFT", ddLabel, "RIGHT", -8, -2)
+    UIDropDownMenu_SetWidth(plannerFrame.filterDD, 130)
+
+    local leftX, topY = 12, -74
+    plannerFrame.leftW = ROLE_COL_W + NAME_COL_W
+    plannerFrame.rightW = 1180 - plannerFrame.leftW - 50
+    plannerFrame.contentH = 680 - 120
+
+    local leftHeader = CreateFrame("Frame", nil, plannerFrame, "BackdropTemplate")
+    leftHeader:SetPoint("TOPLEFT", leftX, topY)
+    leftHeader:SetSize(plannerFrame.leftW, HEADER_H)
+    leftHeader:SetBackdrop({ bgFile = "Interface\\Tooltips\\UI-Tooltip-Background" })
+    leftHeader:SetBackdropColor(0, 0, 0, 0.35)
+    local lh = leftHeader:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    lh:SetPoint("LEFT", 4, 0)
+    lh:SetText("|cffffd100Rolle / Spieler|r")
+
+    plannerFrame.rightHeaderSF = CreateFrame("ScrollFrame", nil, plannerFrame)
+    plannerFrame.rightHeaderSF:SetPoint("TOPLEFT", leftHeader, "TOPRIGHT", GAP, 0)
+    plannerFrame.rightHeaderSF:SetSize(plannerFrame.rightW, HEADER_H)
+    plannerFrame.rightHeaderChild = CreateFrame("Frame", nil, plannerFrame.rightHeaderSF)
+    plannerFrame.rightHeaderChild:SetSize(1, HEADER_H)
+    plannerFrame.rightHeaderSF:SetScrollChild(plannerFrame.rightHeaderChild)
+
+    plannerFrame.leftSF = CreateFrame("ScrollFrame", nil, plannerFrame)
+    plannerFrame.leftSF:SetPoint("TOPLEFT", leftX, topY - HEADER_H - 2)
+    plannerFrame.leftSF:SetSize(plannerFrame.leftW, plannerFrame.contentH)
+    plannerFrame.leftContent = CreateFrame("Frame", nil, plannerFrame.leftSF)
+    plannerFrame.leftContent:SetSize(1, 1)
+    plannerFrame.leftSF:SetScrollChild(plannerFrame.leftContent)
+
+    plannerFrame.rightSF = CreateFrame("ScrollFrame", nil, plannerFrame)
+    plannerFrame.rightSF:SetPoint("TOPLEFT", plannerFrame.leftSF, "TOPRIGHT", GAP, 0)
+    plannerFrame.rightSF:SetSize(plannerFrame.rightW, plannerFrame.contentH)
+    plannerFrame.rightContent = CreateFrame("Frame", nil, plannerFrame.rightSF)
+    plannerFrame.rightContent:SetSize(1, 1)
+    plannerFrame.rightSF:SetScrollChild(plannerFrame.rightContent)
+
+    local sep = plannerFrame:CreateTexture(nil, "ARTWORK")
+    sep:SetPoint("TOPLEFT", plannerFrame.leftSF, "TOPRIGHT", 1, 2)
+    sep:SetPoint("BOTTOMLEFT", plannerFrame.leftSF, "BOTTOMRIGHT", 1, -2)
+    sep:SetWidth(1)
+    sep:SetColorTexture(0.8, 0.7, 0.2, 0.4)
+
+    plannerFrame.vScroll = CreateFrame("Slider", nil, plannerFrame, "UIPanelScrollBarTemplate")
+    plannerFrame.vScroll:SetPoint("TOPLEFT", plannerFrame.rightSF, "TOPRIGHT", 2, -16)
+    plannerFrame.vScroll:SetPoint("BOTTOMLEFT", plannerFrame.rightSF, "BOTTOMRIGHT", 2, 16)
+    plannerFrame.vScroll:SetMinMaxValues(0, 0)
+    plannerFrame.vScroll:SetValueStep(8)
+    plannerFrame.vScroll:SetObeyStepOnDrag(true)
+    plannerFrame.vScroll:SetScript("OnValueChanged", function(self, value)
+        plannerFrame.leftSF:SetVerticalScroll(value)
+        plannerFrame.rightSF:SetVerticalScroll(value)
+    end)
+
+    plannerFrame.hScroll = CreateFrame("Slider", nil, plannerFrame, "UIPanelHorizontalScrollBarTemplate")
+    plannerFrame.hScroll:SetPoint("TOPLEFT", plannerFrame.rightSF, "BOTTOMLEFT", 16, -2)
+    plannerFrame.hScroll:SetPoint("TOPRIGHT", plannerFrame.rightSF, "BOTTOMRIGHT", -16, -2)
+    plannerFrame.hScroll:SetMinMaxValues(0, 0)
+    plannerFrame.hScroll:SetValueStep(8)
+    plannerFrame.hScroll:SetObeyStepOnDrag(true)
+    plannerFrame.hScroll:SetScript("OnValueChanged", function(self, value)
+        plannerFrame.rightSF:SetHorizontalScroll(value)
+        plannerFrame.rightHeaderSF:SetHorizontalScroll(value)
+    end)
+
+    plannerFrame.rightSF:EnableMouseWheel(true)
+    plannerFrame.rightSF:SetScript("OnMouseWheel", function(_, delta)
+        if IsShiftKeyDown() then
+            local step = 36 * (delta > 0 and -1 or 1)
+            local v = plannerFrame.hScroll:GetValue() + step
+            local min, max = plannerFrame.hScroll:GetMinMaxValues()
+            if v < min then v = min elseif v > max then v = max end
+            plannerFrame.hScroll:SetValue(v)
+        else
+            local step = 24 * (delta > 0 and -1 or 1)
+            local v = plannerFrame.vScroll:GetValue() + step
+            local min, max = plannerFrame.vScroll:GetMinMaxValues()
+            if v < min then v = min elseif v > max then v = max end
+            plannerFrame.vScroll:SetValue(v)
+        end
+    end)
+
+    local now = date("*t")
+    plannerFrame.weekStartTs = WeekStartFromDate(string.format("%04d-%02d-%02d", now.year, now.month, now.day))
+    plannerFrame.raidFilter = "ALL"
+
+    prev:SetScript("OnClick", function()
+        plannerFrame.weekStartTs = plannerFrame.weekStartTs - (7 * 86400)
+        RP:RefreshPlanner()
+    end)
+    nextB:SetScript("OnClick", function()
+        plannerFrame.weekStartTs = plannerFrame.weekStartTs + (7 * 86400)
+        RP:RefreshPlanner()
+    end)
+
+    UIDropDownMenu_Initialize(plannerFrame.filterDD, function(_, level)
+        local function Add(name, key)
+            local info = UIDropDownMenu_CreateInfo()
+            info.text = name
+            info.func = function()
+                plannerFrame.raidFilter = key
+                UIDropDownMenu_SetText(plannerFrame.filterDD, name)
+                RP:RefreshPlanner()
+                CloseDropDownMenus()
+            end
+            UIDropDownMenu_AddButton(info, level)
+        end
+        Add("Alle", "ALL")
+        for _, r in ipairs(ADDON.RaidData.raids) do Add(r.short or r.name, r.key) end
+    end)
+    UIDropDownMenu_SetText(plannerFrame.filterDD, "Alle")
+
+    plannerFrame:SetScript("OnMouseUp", function()
+        plannerFrame.dragState = nil
+        if dragGhost then dragGhost:Hide() end
+        ClearDragHighlights()
+    end)
+
+    RP.plannerFrame = plannerFrame
+end
