@@ -156,11 +156,19 @@ end
 
 function THEME:RaiseGlobalDropdowns(level)
     local strataLevel = level or 20
-    for i = 1, 3 do
+    for i = 1, UIDROPDOWNMENU_MAXLEVELS or 3 do
         local list = _G["DropDownList" .. i]
         if list then
+            local level = strataLevel + i
             list:SetFrameStrata("TOOLTIP")
-            list:SetFrameLevel(strataLevel + i)
+            list:SetFrameLevel(level)
+            if not list._gasRaiseHooked then
+                list:HookScript("OnShow", function(self)
+                    self:SetFrameStrata("TOOLTIP")
+                    self:SetFrameLevel(level)
+                end)
+                list._gasRaiseHooked = true
+            end
         end
     end
 end
