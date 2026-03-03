@@ -5,11 +5,16 @@ if not RP then return end
 
 local ROLE_COL_W, NAME_COL_W = 80, 150
 local RAID_COL_W, ROW_H = 120, 22
-local HEADER_H, GAP = 22, 4
+local HEADER_H, GAP = 42, 4
+
+local ROLE_META = {
+    TANK = { order = 1, label = "Tank", color = "66aaff" },
+    HEAL = { order = 2, label = "Heiler", color = "66ff88" },
+    DD   = { order = 3, label = "DD", color = "ff7777" },
+}
 
 local plannerFrame
 local pRows, pCells, pHeaders = {}, {}, {}
-local dragGhost
 
 local function ParseDate(dateStr)
     local y, m, d = (dateStr or ""):match("^(%d%d%d%d)%-(%d%d)%-(%d%d)$")
@@ -55,6 +60,53 @@ local function IsSignupPlanned(signup)
         return signup.confirmed == true
     end
     return signup.status == "YES"
+end
+
+local function GetPlannedRoleCounts(raid)
+    local counts = { TANK = 0, HEAL = 0, DD = 0 }
+    for _, signup in pairs((raid and raid.signups) or {}) do
+        if IsSignupPlanned(signup) then
+            local role = GetSignupRole(signup)
+            if counts[role] ~= nil then
+                counts[role] = counts[role] + 1
+            end
+        end
+    end
+    return counts
+end
+
+
+local function GetRoleForPlayer(player)
+    if player.primaryRole then return player.primaryRole end
+    local bestRole, bestCount = "DD", -1
+    for role, count in pairs(player.roleCounts or {}) do
+        local ord = (ROLE_META[role] and ROLE_META[role].order) or 99
+        local bestOrd = (ROLE_META[bestRole] and ROLE_META[bestRole].order) or 99
+        if count > bestCount or (count == bestCount and ord < bestOrd) then
+            bestRole, bestCount = role, count
+        end
+    end
+    return bestRole
+end
+
+local function GetClassColorCode(class, fallback)
+    if RAID_CLASS_COLORS and class and RAID_CLASS_COLORS[class] then
+        return RAID_CLASS_COLORS[class].colorStr or fallback
+    end
+    return fallback
+end
+
+local function IsPlayerPlannedInSameRaidWeek(name, raidKey, exceptRaidId)
+    if not plannerFrame or not plannerFrame.planData then return false end
+    for _, other in ipairs(plannerFrame.planData.columns or {}) do
+        if other.raidKey == raidKey and other.id ~= exceptRaidId then
+            local os = other.signups and other.signups[name]
+            if os and IsSignupPlanned(os) then
+                return true
+            end
+        end
+    end
+    return false
 end
 
 local function DetermineInitialWeekStart()
@@ -154,39 +206,13 @@ local function RefreshPlannerFilterDropdownOptions()
     UIDropDownMenu_SetText(plannerFrame.filterDD, label)
 end
 
-local function EnsureGhost()
-    if dragGhost then return end
-    dragGhost = CreateFrame("Frame", nil, UIParent, "BackdropTemplate")
-    dragGhost:SetSize(170, 22)
-    dragGhost:SetFrameStrata("TOOLTIP")
-    dragGhost:SetBackdrop({
-        bgFile = "Interface\\Tooltips\\UI-Tooltip-Background",
-        edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
-        tile = true, tileSize = 16, edgeSize = 12,
-        insets = { left = 3, right = 3, top = 3, bottom = 3 },
-    })
-    dragGhost:SetBackdropColor(0, 0, 0, 0.95)
-    dragGhost.text = dragGhost:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-    dragGhost.text:SetPoint("CENTER")
-    dragGhost:Hide()
-    dragGhost:SetScript("OnUpdate", function(self)
-        if not plannerFrame or not plannerFrame.dragState then self:Hide() return end
-        local scale = UIParent:GetEffectiveScale()
-        local x, y = GetCursorPosition()
-        self:ClearAllPoints()
-        self:SetPoint("BOTTOMLEFT", UIParent, "BOTTOMLEFT", x / scale + 14, y / scale - 14)
-    end)
-end
-
 function RP:RebuildPlannerData()
     if not plannerFrame then return end
     local weekStartTs = plannerFrame.weekStartTs
     local fromTs, toTs = WeekRangeByStart(weekStartTs)
     local raidFilter = plannerFrame.raidFilter
 
-    local columns, rows = {}, {}
-    local rowByKey = {}
-
+    local columns = {}
     for _, raid in pairs(ADDON.RaidplanerDB:GetRaids()) do
         local ts = ParseDate(raid.date)
         if ts and ts >= fromTs and ts <= toTs and (not raidFilter or raidFilter == "ALL" or raid.raidKey == raidFilter) then
@@ -199,29 +225,101 @@ function RP:RebuildPlannerData()
         return (a.time or "") < (b.time or "")
     end)
 
-    local roleOrder = { TANK = 1, HEAL = 2, DD = 3 }
+    local playersByName = {}
     for _, raid in ipairs(columns) do
         for name, s in pairs(raid.signups or {}) do
-            local roleKey = GetSignupRole(s)
-            local key = name .. "#" .. roleKey
-            if not rowByKey[key] then
-                local cc = RAID_CLASS_COLORS and RAID_CLASS_COLORS[s.class]
-                rowByKey[key] = {
-                    key = key, name = name, class = s.class, roleKey = roleKey,
-                    roleOrder = roleOrder[roleKey] or 99,
-                    classColor = cc,
+            local pInfo = playersByName[name]
+            if not pInfo then
+                pInfo = {
+                    name = name,
+                    class = s.class,
+                    roleCounts = { TANK = 0, HEAL = 0, DD = 0 },
+                    plannedAny = false,
                 }
-                rows[#rows + 1] = rowByKey[key]
+                playersByName[name] = pInfo
+            end
+            if not pInfo.class and s.class then pInfo.class = s.class end
+
+            local roleKey = GetSignupRole(s)
+            pInfo.roleCounts[roleKey] = (pInfo.roleCounts[roleKey] or 0) + 1
+            if IsSignupPlanned(s) then
+                pInfo.plannedAny = true
+                if not pInfo.primaryRole then pInfo.primaryRole = roleKey end
             end
         end
     end
 
-    table.sort(rows, function(a, b)
-        if a.roleOrder ~= b.roleOrder then return a.roleOrder < b.roleOrder end
-        return a.name < b.name
-    end)
+    local roleBuckets = { TANK = {}, HEAL = {}, DD = {} }
+    for _, pInfo in pairs(playersByName) do
+        pInfo.roleKey = GetRoleForPlayer(pInfo)
+        pInfo.classColor = RAID_CLASS_COLORS and pInfo.class and RAID_CLASS_COLORS[pInfo.class] or nil
+        roleBuckets[pInfo.roleKey] = roleBuckets[pInfo.roleKey] or {}
+        roleBuckets[pInfo.roleKey][#roleBuckets[pInfo.roleKey] + 1] = pInfo
+    end
 
-    plannerFrame.planData = { columns = columns, rows = rows }
+    local rows = {}
+    rows[#rows + 1] = { isSection = true, sectionType = "header", title = "Raid Kader" }
+    for _, roleKey in ipairs({ "TANK", "HEAL", "DD" }) do
+        local rolePlayers = roleBuckets[roleKey] or {}
+        local plannedPlayers, waitingPlayers = {}, {}
+        for _, pInfo in ipairs(rolePlayers) do
+            if pInfo.plannedAny then
+                plannedPlayers[#plannedPlayers + 1] = pInfo
+            else
+                waitingPlayers[#waitingPlayers + 1] = pInfo
+            end
+        end
+        table.sort(plannedPlayers, function(a, b) return a.name < b.name end)
+        table.sort(waitingPlayers, function(a, b) return a.name < b.name end)
+
+        rows[#rows + 1] = {
+            isSection = true,
+            sectionType = "role",
+            roleKey = roleKey,
+            planned = #plannedPlayers,
+            total = #rolePlayers,
+            inRoster = true,
+        }
+
+        for _, pInfo in ipairs(plannedPlayers) do
+            rows[#rows + 1] = {
+                isSection = false,
+                name = pInfo.name,
+                class = pInfo.class,
+                classColor = pInfo.classColor,
+                roleKey = roleKey,
+                plannedAny = true,
+                inRoster = true,
+            }
+        end
+
+        roleBuckets[roleKey] = waitingPlayers
+    end
+
+    rows[#rows + 1] = { isSection = true, sectionType = "divider" }
+    rows[#rows + 1] = { isSection = true, sectionType = "header", title = "Spieler (nicht eingeplant)" }
+
+    local waitingPlayers = {}
+    for _, roleKey in ipairs({ "TANK", "HEAL", "DD" }) do
+        for _, pInfo in ipairs(roleBuckets[roleKey] or {}) do
+            waitingPlayers[#waitingPlayers + 1] = pInfo
+        end
+    end
+    table.sort(waitingPlayers, function(a, b) return a.name < b.name end)
+
+    for _, pInfo in ipairs(waitingPlayers) do
+        rows[#rows + 1] = {
+            isSection = false,
+            name = pInfo.name,
+            class = pInfo.class,
+            classColor = pInfo.classColor,
+            roleKey = pInfo.roleKey,
+            plannedAny = false,
+            inRoster = false,
+        }
+    end
+
+    plannerFrame.planData = { columns = columns, rows = rows, playersByName = playersByName }
 end
 
 local function MakeCell(parent)
@@ -239,55 +337,10 @@ local function MakeCell(parent)
     return b
 end
 
-local function ClearDragHighlights()
-    if not plannerFrame then return end
-    for _, c in ipairs(pCells) do
-        c:SetAlpha(1)
-        c:SetBackdropBorderColor(0.3, 0.3, 0.3, 0.35)
-        c.validDrop = nil
-    end
-end
-
-local function BuildDragHighlights()
-    if not plannerFrame or not plannerFrame.dragState then return end
-    local d = plannerFrame.dragState
-    local pd = plannerFrame.planData
-    local onePerType = true
-    for _, c in ipairs(pCells) do
-        c.validDrop = false
-        c:SetAlpha(0.25)
-        local raid = c.raidObj
-        if c.rowKey == d.rowKey and raid and raid.signups and raid.signups[d.name] then
-            local s = raid.signups[d.name]
-            if GetSignupRole(s) == d.roleKey then
-                c.validDrop = true
-                if onePerType and raid.raidKey then
-                    for _, other in ipairs(pd.columns or {}) do
-                        if other.id ~= raid.id and other.raidKey == raid.raidKey then
-                            local os = other.signups and other.signups[d.name]
-                            if os and IsSignupPlanned(os) then
-                                c.validDrop = false
-                                break
-                            end
-                        end
-                    end
-                end
-            end
-        end
-        if c.validDrop then
-            c:SetAlpha(1)
-            c:SetBackdropBorderColor(0.95, 0.85, 0.2, 0.8)
-        else
-            c:SetBackdropBorderColor(0.2, 0.2, 0.2, 0.25)
-        end
-    end
-end
-
-function RP:PlannerAssignPlayerToRaid(name, roleKey, raidId)
+function RP:PlannerAssignPlayerToRaid(name, raidId)
     local raid = ADDON.RaidplanerDB:GetRaid(raidId)
     if not raid or not raid.signups or not raid.signups[name] then return end
     local s = raid.signups[name]
-    if GetSignupRole(s) ~= roleKey then return end
 
     local wasPlanned = IsSignupPlanned(s)
     if wasPlanned then
@@ -326,9 +379,12 @@ end
 
 function RP:RefreshPlanner()
     if not plannerFrame or not plannerFrame:IsShown() then return end
+    if ADDON.UITheme and ADDON.UITheme.RaiseGlobalDropdowns then
+        ADDON.UITheme:RaiseGlobalDropdowns(32)
+    end
     RefreshPlannerFilterDropdownOptions()
     self:RebuildPlannerData()
-    local pd = plannerFrame.planData or { rows = {}, columns = {} }
+    local pd = plannerFrame.planData or { rows = {}, columns = {}, playersByName = {} }
 
     for _, h in ipairs(pHeaders) do h:Hide() end
     for _, r in ipairs(pRows) do r:Hide() end
@@ -353,7 +409,14 @@ function RP:RefreshPlanner()
         h:SetPoint("TOPLEFT", (i - 1) * RAID_COL_W, 0)
         local def = ADDON.RaidData:GetByKey(raid.raidKey)
         local short = def and def.short or raid.raidKey or "?"
-        h.t:SetText("|cffffd100" .. short .. "|r\n|cffcccccc" .. FormatHeadDate(raid.date) .. "|r")
+        local planned = GetPlannedRoleCounts(raid)
+        h.t:SetText(
+            "|cffffd100" .. short .. "|r\n"
+            .. "|cffcccccc" .. FormatHeadDate(raid.date) .. "|r\n"
+            .. "|cff66aaffT:" .. planned.TANK .. "|r "
+            .. "|cff66ff88H:" .. planned.HEAL .. "|r "
+            .. "|cffff7777D:" .. planned.DD .. "|r"
+        )
         h:Show()
     end
 
@@ -362,39 +425,54 @@ function RP:RefreshPlanner()
         if not row then
             row = CreateFrame("Button", nil, plannerFrame.leftContent, "BackdropTemplate")
             row:SetSize(leftW, ROW_H)
-            row.role = row:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
-            row.role:SetPoint("LEFT", 4, 0)
-            row.role:SetWidth(ROLE_COL_W - 8)
-            row.role:SetJustifyH("LEFT")
-            row.name = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-            row.name:SetPoint("LEFT", ROLE_COL_W + 4, 0)
-            row.name:SetWidth(NAME_COL_W - 8)
-            row.name:SetJustifyH("LEFT")
-            row:SetScript("OnMouseDown", function(self, btn)
-                if btn ~= "LeftButton" then return end
-                if not RP:CanManageRaids() then return end
-                plannerFrame.dragState = {
-                    name = self.playerName,
-                    roleKey = self.roleKey,
-                    rowKey = self.rowKey,
-                }
-                EnsureGhost()
-                dragGhost.text:SetText(self.playerName .. " (" .. self.roleKey .. ")")
-                dragGhost:Show()
-                BuildDragHighlights()
+            row:SetBackdrop({ bgFile = "Interface\\Tooltips\\UI-Tooltip-Background" })
+            row.text = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+            row.text:SetPoint("LEFT", 6, 0)
+            row.text:SetWidth(leftW - 12)
+            row.text:SetJustifyH("LEFT")
+            row:SetScript("OnClick", function(self)
+                if not RP:CanManageRaids() or self.isSection or not self.playerName then return end
+                if plannerFrame.selectedPlayerName == self.playerName then
+                    plannerFrame.selectedPlayerName = nil
+                else
+                    plannerFrame.selectedPlayerName = self.playerName
+                end
+                RP:RefreshPlanner()
             end)
             pRows[rowIdx] = row
         end
+
         row:SetPoint("TOPLEFT", 0, -(rowIdx - 1) * ROW_H)
-        row.playerName = rowData.name
-        row.roleKey = rowData.roleKey
-        row.rowKey = rowData.key
-        local roleInfo = ADDON.RaidData:GetRoleInfo(rowData.roleKey)
-        row.role:SetText("|cffffd100" .. (roleInfo and roleInfo.name or rowData.roleKey) .. "|r")
-        if rowData.classColor then
-            row.name:SetText(string.format("|cff%02x%02x%02x%s|r", rowData.classColor.r * 255, rowData.classColor.g * 255, rowData.classColor.b * 255, rowData.name))
+        row.isSection = rowData.isSection
+
+        if rowData.isSection then
+            row.playerName = nil
+            if rowData.sectionType == "header" then
+                row:SetBackdropColor(0.2, 0.16, 0.05, 0.55)
+                row.text:SetText("|cffffd100" .. (rowData.title or "") .. "|r")
+            elseif rowData.sectionType == "divider" then
+                row:SetBackdropColor(0.9, 0.75, 0.2, 0.45)
+                row.text:SetText("")
+            else
+                local meta = ROLE_META[rowData.roleKey] or ROLE_META.DD
+                row:SetBackdropColor(0.05, 0.08, 0.12, 0.55)
+                row.text:SetText("|cff" .. meta.color .. meta.label .. "|r |cff00ff00(" .. rowData.planned .. " Dabei, " .. rowData.total .. " gesamt)|r")
+            end
         else
-            row.name:SetText(rowData.name)
+            row.playerName = rowData.name
+            local selected = plannerFrame.selectedPlayerName == rowData.name
+            local isPlanned = rowData.plannedAny
+            if selected then
+                row:SetBackdropColor(0.25, 0.20, 0.05, 0.55)
+            else
+                row:SetBackdropColor(0, 0, 0, 0.20)
+            end
+            if rowData.classColor then
+                local cr, cg, cb = rowData.classColor.r * 255, rowData.classColor.g * 255, rowData.classColor.b * 255
+                row.text:SetText(string.format("|cff%02x%02x%02x%s|r", cr, cg, cb, rowData.name))
+            else
+                row.text:SetText("|cffffffff" .. rowData.name .. "|r")
+            end
         end
         row:Show()
 
@@ -404,34 +482,74 @@ function RP:RefreshPlanner()
             if not cell then
                 cell = MakeCell(plannerFrame.rightContent)
                 cell:SetScript("OnMouseUp", function(self)
-                    if not plannerFrame.dragState then return end
-                    if self.validDrop then
-                        RP:PlannerAssignPlayerToRaid(plannerFrame.dragState.name, plannerFrame.dragState.roleKey, self.raidId)
-                    end
-                    plannerFrame.dragState = nil
-                    if dragGhost then dragGhost:Hide() end
-                    ClearDragHighlights()
+                    if not RP:CanManageRaids() then return end
+                    local selectedName = plannerFrame.selectedPlayerName
+                    if not selectedName or not self.canAssign then return end
+                    RP:PlannerAssignPlayerToRaid(selectedName, self.raidId)
                 end)
                 pCells[idx] = cell
             end
             cell:SetPoint("TOPLEFT", (colIdx - 1) * RAID_COL_W + 1, -(rowIdx - 1) * ROW_H - 1)
             cell.raidId = raid.id
             cell.raidObj = raid
-            cell.rowKey = rowData.key
 
-            local s = raid.signups and raid.signups[rowData.name]
-            local txt = ""
-            if s and GetSignupRole(s) == rowData.roleKey then
-                local specInfo = ADDON.RaidData:GetSpecInfo(s.class, s.spec or "")
-                txt = "|cff888888" .. ((specInfo and specInfo.name) or rowData.roleKey) .. "|r"
-                if IsSignupPlanned(s) then
-                    txt = "|cff44ff44GEPLANT|r"
+            if rowData.isSection then
+                cell.canAssign = false
+                if rowData.sectionType == "role" and rowData.inRoster then
+                    local roleCounts = GetPlannedRoleCounts(raid)
+                    local count = roleCounts[rowData.roleKey] or 0
+                    local meta = ROLE_META[rowData.roleKey] or ROLE_META.DD
+                    cell.label:SetText("|cff" .. meta.color .. tostring(count) .. "|r")
+                    cell:SetBackdropColor(0.05, 0.08, 0.12, 0.45)
+                    cell:SetBackdropBorderColor(0.1, 0.2, 0.25, 0.35)
+                elseif rowData.sectionType == "divider" then
+                    cell.label:SetText("")
+                    cell:SetBackdropColor(0.9, 0.75, 0.2, 0.45)
+                    cell:SetBackdropBorderColor(0.9, 0.75, 0.2, 0.6)
+                else
+                    cell.label:SetText("")
+                    cell:SetBackdropColor(0.12, 0.10, 0.04, 0.35)
+                    cell:SetBackdropBorderColor(0.25, 0.2, 0.08, 0.4)
                 end
+                cell:Show()
+            else
+                local s = raid.signups and raid.signups[rowData.name]
+                local selectedName = plannerFrame.selectedPlayerName
+                local isSelectedRow = selectedName == rowData.name
+                local isPlanned = s and IsSignupPlanned(s)
+                local blocked = false
+                if selectedName and raid.raidKey then
+                    blocked = IsPlayerPlannedInSameRaidWeek(selectedName, raid.raidKey, raid.id)
+                end
+
+                cell.canAssign = isSelectedRow and s ~= nil and (not blocked or isPlanned)
+
+                local txt = ""
+                if s then
+                    if isPlanned then
+                        local classCode = GetClassColorCode(s.class or rowData.class, "ffffffff")
+                        txt = "|c" .. classCode .. rowData.name .. "|r"
+                    elseif rowData.plannedAny then
+                        txt = ""
+                    else
+                        local specInfo = ADDON.RaidData:GetSpecInfo(s.class, s.spec or "")
+                        txt = "|cff888888" .. ((specInfo and specInfo.name) or (s.spec or "-")) .. "|r"
+                    end
+                end
+                cell.label:SetText(txt)
+
+                if cell.canAssign then
+                    cell:SetBackdropColor(0.16, 0.15, 0.05, 0.52)
+                    cell:SetBackdropBorderColor(0.95, 0.85, 0.2, 0.8)
+                elseif selectedName and s and blocked and not isPlanned then
+                    cell:SetBackdropColor(0.12, 0.04, 0.04, 0.50)
+                    cell:SetBackdropBorderColor(0.8, 0.2, 0.2, 0.55)
+                else
+                    cell:SetBackdropColor(0.08, 0.08, 0.12, 0.5)
+                    cell:SetBackdropBorderColor(0.3, 0.3, 0.3, 0.35)
+                end
+                cell:Show()
             end
-            cell.label:SetText(txt)
-            cell:SetBackdropColor(0.08, 0.08, 0.12, 0.5)
-            cell:SetBackdropBorderColor(0.3, 0.3, 0.3, 0.35)
-            cell:Show()
         end
     end
 
@@ -575,20 +693,33 @@ function RP:EnsurePlannerFrame()
     end)
 
     plannerFrame.rightSF:EnableMouseWheel(true)
+    plannerFrame.rightHeaderSF:EnableMouseWheel(true)
+
+    local function ScrollHorizontal(delta)
+        local step = 36 * (delta > 0 and -1 or 1)
+        local v = plannerFrame.hScroll:GetValue() + step
+        local min, max = plannerFrame.hScroll:GetMinMaxValues()
+        if v < min then v = min elseif v > max then v = max end
+        plannerFrame.hScroll:SetValue(v)
+    end
+
+    local function ScrollVertical(delta)
+        local step = 24 * (delta > 0 and -1 or 1)
+        local v = plannerFrame.vScroll:GetValue() + step
+        local min, max = plannerFrame.vScroll:GetMinMaxValues()
+        if v < min then v = min elseif v > max then v = max end
+        plannerFrame.vScroll:SetValue(v)
+    end
+
     plannerFrame.rightSF:SetScript("OnMouseWheel", function(_, delta)
         if IsShiftKeyDown() then
-            local step = 36 * (delta > 0 and -1 or 1)
-            local v = plannerFrame.hScroll:GetValue() + step
-            local min, max = plannerFrame.hScroll:GetMinMaxValues()
-            if v < min then v = min elseif v > max then v = max end
-            plannerFrame.hScroll:SetValue(v)
+            ScrollHorizontal(delta)
         else
-            local step = 24 * (delta > 0 and -1 or 1)
-            local v = plannerFrame.vScroll:GetValue() + step
-            local min, max = plannerFrame.vScroll:GetMinMaxValues()
-            if v < min then v = min elseif v > max then v = max end
-            plannerFrame.vScroll:SetValue(v)
+            ScrollVertical(delta)
         end
+    end)
+    plannerFrame.rightHeaderSF:SetScript("OnMouseWheel", function(_, delta)
+        ScrollHorizontal(delta)
     end)
 
     plannerFrame.weekStartTs = DetermineInitialWeekStart()
@@ -606,12 +737,6 @@ function RP:EnsurePlannerFrame()
     end)
 
     RefreshPlannerFilterDropdownOptions()
-
-    plannerFrame:SetScript("OnMouseUp", function()
-        plannerFrame.dragState = nil
-        if dragGhost then dragGhost:Hide() end
-        ClearDragHighlights()
-    end)
 
     RP.plannerFrame = plannerFrame
 end
