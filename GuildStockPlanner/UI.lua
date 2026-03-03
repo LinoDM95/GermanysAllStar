@@ -80,9 +80,35 @@ local function CreateLabel(parent, fontObj, text, ...)
 end
 
 local function CreateBtn(parent, w, h, text, onClick)
-    local btn = CreateFrame("Button", nil, parent, "UIPanelButtonTemplate")
+    local btn = CreateFrame("Button", nil, parent, "BackdropTemplate")
     btn:SetSize(w, h)
-    btn:SetText(text)
+    btn:SetBackdrop({
+        bgFile   = "Interface\\Tooltips\\UI-Tooltip-Background",
+        edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
+        tile = true, tileSize = 16, edgeSize = 12,
+        insets = { left = 2, right = 2, top = 2, bottom = 2 },
+    })
+    btn:SetBackdropColor(0.11, 0.12, 0.18, 0.96)
+    btn:SetBackdropBorderColor(0.35, 0.38, 0.48, 0.9)
+
+    local hl = btn:CreateTexture(nil, "HIGHLIGHT")
+    hl:SetAllPoints()
+    hl:SetColorTexture(1, 1, 1, 0.08)
+
+    local txt = btn:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    txt:SetPoint("CENTER")
+    txt:SetText(text)
+    btn._txt = txt
+
+    btn:SetScript("OnEnter", function(self)
+        self:SetBackdropColor(0.15, 0.17, 0.24, 1)
+        self:SetBackdropBorderColor(0.55, 0.58, 0.72, 1)
+    end)
+    btn:SetScript("OnLeave", function(self)
+        self:SetBackdropColor(0.11, 0.12, 0.18, 0.96)
+        self:SetBackdropBorderColor(0.35, 0.38, 0.48, 0.9)
+    end)
+
     if onClick then btn:SetScript("OnClick", onClick) end
     return btn
 end
@@ -92,6 +118,7 @@ local function CreateEB(parent, w, h, numeric)
     eb:SetSize(w, h)
     eb:SetAutoFocus(false)
     if numeric then eb:SetNumeric(true) end
+    eb:SetTextInsets(8, 8, 0, 0)
     eb:SetScript("OnEscapePressed", function(self) self:ClearFocus() end)
     eb:SetScript("OnEnterPressed", function(self) self:ClearFocus() end)
     return eb
@@ -438,7 +465,7 @@ function UI:CreateMainFrame()
     mainFrame:SetSize(MAIN_W, MAIN_H)
     mainFrame:SetPoint("CENTER")
     mainFrame:SetFrameStrata("HIGH")
-    ApplyBackdrop(mainFrame, BD_MAIN, 0.05, 0.05, 0.08, 0.96, 0.5, 0.5, 0.5)
+    ApplyBackdrop(mainFrame, BD_MAIN, 0.03, 0.04, 0.07, 0.98, 0.5, 0.55, 0.65)
     MakeMovable(mainFrame)
     mainFrame:Hide()
     tinsert(UISpecialFrames, "GSPMainFrame") -- ESC schliessen
@@ -483,7 +510,7 @@ function UI:CreateMainFrame()
     contentInset = CreateFrame("Frame", nil, mainFrame, "BackdropTemplate")
     contentInset:SetPoint("TOPLEFT", INSET_PAD, -84)
     contentInset:SetPoint("BOTTOMRIGHT", -INSET_PAD, INSET_PAD)
-    ApplyBackdrop(contentInset, BD_INSET, 0.07, 0.07, 0.1, 0.85, 0.35, 0.35, 0.35)
+    ApplyBackdrop(contentInset, BD_INSET, 0.05, 0.06, 0.1, 0.88, 0.35, 0.42, 0.5)
 
     -- Tab-Buttons (unterhalb von scanStatus bei y=-38)
     local tabNames = { "Rezepte", "Zu farmen", "Gildenbank", "Sync-Log", "How-To", "Einstellungen" }
