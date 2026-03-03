@@ -16,5 +16,6 @@ GuildStockPlanner\UI.lua
 Raidplaner\RaidData.lua
 Raidplaner\DB.lua
 Raidplaner\Sync.lua
+Raidplaner\UITheme.lua
 Raidplaner\UI.lua
 GuildStocks\UI.lua
