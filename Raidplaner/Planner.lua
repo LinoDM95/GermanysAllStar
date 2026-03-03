@@ -296,28 +296,27 @@ function RP:RebuildPlannerData()
         roleBuckets[roleKey] = waitingPlayers
     end
 
+    rows[#rows + 1] = { isSection = true, sectionType = "divider" }
     rows[#rows + 1] = { isSection = true, sectionType = "header", title = "Spieler (nicht eingeplant)" }
+
+    local waitingPlayers = {}
     for _, roleKey in ipairs({ "TANK", "HEAL", "DD" }) do
-        local waitingPlayers = roleBuckets[roleKey] or {}
+        for _, pInfo in ipairs(roleBuckets[roleKey] or {}) do
+            waitingPlayers[#waitingPlayers + 1] = pInfo
+        end
+    end
+    table.sort(waitingPlayers, function(a, b) return a.name < b.name end)
+
+    for _, pInfo in ipairs(waitingPlayers) do
         rows[#rows + 1] = {
-            isSection = true,
-            sectionType = "role",
-            roleKey = roleKey,
-            planned = 0,
-            total = #waitingPlayers,
+            isSection = false,
+            name = pInfo.name,
+            class = pInfo.class,
+            classColor = pInfo.classColor,
+            roleKey = pInfo.roleKey,
+            plannedAny = false,
             inRoster = false,
         }
-        for _, pInfo in ipairs(waitingPlayers) do
-            rows[#rows + 1] = {
-                isSection = false,
-                name = pInfo.name,
-                class = pInfo.class,
-                classColor = pInfo.classColor,
-                roleKey = roleKey,
-                plannedAny = false,
-                inRoster = false,
-            }
-        end
     end
 
     plannerFrame.planData = { columns = columns, rows = rows, playersByName = playersByName }
@@ -451,6 +450,9 @@ function RP:RefreshPlanner()
             if rowData.sectionType == "header" then
                 row:SetBackdropColor(0.2, 0.16, 0.05, 0.55)
                 row.text:SetText("|cffffd100" .. (rowData.title or "") .. "|r")
+            elseif rowData.sectionType == "divider" then
+                row:SetBackdropColor(0.9, 0.75, 0.2, 0.45)
+                row.text:SetText("")
             else
                 local meta = ROLE_META[rowData.roleKey] or ROLE_META.DD
                 row:SetBackdropColor(0.05, 0.08, 0.12, 0.55)
@@ -498,11 +500,17 @@ function RP:RefreshPlanner()
                     local count = roleCounts[rowData.roleKey] or 0
                     local meta = ROLE_META[rowData.roleKey] or ROLE_META.DD
                     cell.label:SetText("|cff" .. meta.color .. tostring(count) .. "|r")
+                    cell:SetBackdropColor(0.05, 0.08, 0.12, 0.45)
+                    cell:SetBackdropBorderColor(0.1, 0.2, 0.25, 0.35)
+                elseif rowData.sectionType == "divider" then
+                    cell.label:SetText("")
+                    cell:SetBackdropColor(0.9, 0.75, 0.2, 0.45)
+                    cell:SetBackdropBorderColor(0.9, 0.75, 0.2, 0.6)
                 else
                     cell.label:SetText("")
+                    cell:SetBackdropColor(0.12, 0.10, 0.04, 0.35)
+                    cell:SetBackdropBorderColor(0.25, 0.2, 0.08, 0.4)
                 end
-                cell:SetBackdropColor(0.05, 0.08, 0.12, 0.45)
-                cell:SetBackdropBorderColor(0.1, 0.2, 0.25, 0.35)
                 cell:Show()
             else
                 local s = raid.signups and raid.signups[rowData.name]
