@@ -89,6 +89,13 @@ local function GetRoleForPlayer(player)
     return bestRole
 end
 
+local function GetClassColorCode(class, fallback)
+    if RAID_CLASS_COLORS and class and RAID_CLASS_COLORS[class] then
+        return RAID_CLASS_COLORS[class].colorStr or fallback
+    end
+    return fallback
+end
+
 local function IsPlayerPlannedInSameRaidWeek(name, raidKey, exceptRaidId)
     if not plannerFrame or not plannerFrame.planData then return false end
     for _, other in ipairs(plannerFrame.planData.columns or {}) do
@@ -251,30 +258,64 @@ function RP:RebuildPlannerData()
     end
 
     local rows = {}
+    rows[#rows + 1] = { isSection = true, sectionType = "header", title = "Raid Kader" }
     for _, roleKey in ipairs({ "TANK", "HEAL", "DD" }) do
         local rolePlayers = roleBuckets[roleKey] or {}
-        table.sort(rolePlayers, function(a, b) return a.name < b.name end)
-
-        local plannedCount = 0
+        local plannedPlayers, waitingPlayers = {}, {}
         for _, pInfo in ipairs(rolePlayers) do
-            if pInfo.plannedAny then plannedCount = plannedCount + 1 end
+            if pInfo.plannedAny then
+                plannedPlayers[#plannedPlayers + 1] = pInfo
+            else
+                waitingPlayers[#waitingPlayers + 1] = pInfo
+            end
         end
+        table.sort(plannedPlayers, function(a, b) return a.name < b.name end)
+        table.sort(waitingPlayers, function(a, b) return a.name < b.name end)
 
         rows[#rows + 1] = {
             isSection = true,
+            sectionType = "role",
             roleKey = roleKey,
-            planned = plannedCount,
+            planned = #plannedPlayers,
             total = #rolePlayers,
+            inRoster = true,
         }
 
-        for _, pInfo in ipairs(rolePlayers) do
+        for _, pInfo in ipairs(plannedPlayers) do
             rows[#rows + 1] = {
                 isSection = false,
                 name = pInfo.name,
                 class = pInfo.class,
                 classColor = pInfo.classColor,
                 roleKey = roleKey,
-                plannedAny = pInfo.plannedAny,
+                plannedAny = true,
+                inRoster = true,
+            }
+        end
+
+        roleBuckets[roleKey] = waitingPlayers
+    end
+
+    rows[#rows + 1] = { isSection = true, sectionType = "header", title = "Spieler (nicht eingeplant)" }
+    for _, roleKey in ipairs({ "TANK", "HEAL", "DD" }) do
+        local waitingPlayers = roleBuckets[roleKey] or {}
+        rows[#rows + 1] = {
+            isSection = true,
+            sectionType = "role",
+            roleKey = roleKey,
+            planned = 0,
+            total = #waitingPlayers,
+            inRoster = false,
+        }
+        for _, pInfo in ipairs(waitingPlayers) do
+            rows[#rows + 1] = {
+                isSection = false,
+                name = pInfo.name,
+                class = pInfo.class,
+                classColor = pInfo.classColor,
+                roleKey = roleKey,
+                plannedAny = false,
+                inRoster = false,
             }
         end
     end
@@ -406,10 +447,15 @@ function RP:RefreshPlanner()
         row.isSection = rowData.isSection
 
         if rowData.isSection then
-            local meta = ROLE_META[rowData.roleKey] or ROLE_META.DD
             row.playerName = nil
-            row:SetBackdropColor(0.05, 0.08, 0.12, 0.55)
-            row.text:SetText("|cff" .. meta.color .. meta.label .. "|r |cff00ff00(" .. rowData.planned .. " Dabei, " .. rowData.total .. " gesamt)|r")
+            if rowData.sectionType == "header" then
+                row:SetBackdropColor(0.2, 0.16, 0.05, 0.55)
+                row.text:SetText("|cffffd100" .. (rowData.title or "") .. "|r")
+            else
+                local meta = ROLE_META[rowData.roleKey] or ROLE_META.DD
+                row:SetBackdropColor(0.05, 0.08, 0.12, 0.55)
+                row.text:SetText("|cff" .. meta.color .. meta.label .. "|r |cff00ff00(" .. rowData.planned .. " Dabei, " .. rowData.total .. " gesamt)|r")
+            end
         else
             row.playerName = rowData.name
             local selected = plannerFrame.selectedPlayerName == rowData.name
@@ -421,10 +467,9 @@ function RP:RefreshPlanner()
             end
             if rowData.classColor then
                 local cr, cg, cb = rowData.classColor.r * 255, rowData.classColor.g * 255, rowData.classColor.b * 255
-                if isPlanned then cr, cg, cb = 140, 140, 140 end
                 row.text:SetText(string.format("|cff%02x%02x%02x%s|r", cr, cg, cb, rowData.name))
             else
-                row.text:SetText((isPlanned and "|cff888888" or "|cffffffff") .. rowData.name .. "|r")
+                row.text:SetText("|cffffffff" .. rowData.name .. "|r")
             end
         end
         row:Show()
@@ -447,9 +492,15 @@ function RP:RefreshPlanner()
             cell.raidObj = raid
 
             if rowData.isSection then
-                local meta = ROLE_META[rowData.roleKey] or ROLE_META.DD
                 cell.canAssign = false
-                cell.label:SetText("|cff" .. meta.color .. "*|r")
+                if rowData.sectionType == "role" and rowData.inRoster then
+                    local roleCounts = GetPlannedRoleCounts(raid)
+                    local count = roleCounts[rowData.roleKey] or 0
+                    local meta = ROLE_META[rowData.roleKey] or ROLE_META.DD
+                    cell.label:SetText("|cff" .. meta.color .. tostring(count) .. "|r")
+                else
+                    cell.label:SetText("")
+                end
                 cell:SetBackdropColor(0.05, 0.08, 0.12, 0.45)
                 cell:SetBackdropBorderColor(0.1, 0.2, 0.25, 0.35)
                 cell:Show()
@@ -468,7 +519,10 @@ function RP:RefreshPlanner()
                 local txt = ""
                 if s then
                     if isPlanned then
-                        txt = "|cff44ff44" .. rowData.name .. "|r"
+                        local classCode = GetClassColorCode(s.class or rowData.class, "ffffffff")
+                        txt = "|c" .. classCode .. rowData.name .. "|r"
+                    elseif rowData.plannedAny then
+                        txt = ""
                     else
                         local specInfo = ADDON.RaidData:GetSpecInfo(s.class, s.spec or "")
                         txt = "|cff888888" .. ((specInfo and specInfo.name) or (s.spec or "-")) .. "|r"
