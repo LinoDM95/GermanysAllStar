@@ -7,16 +7,22 @@ local _, ADDON = ...
 
 ADDON.Raidplaner = {}
 local RP = ADDON.Raidplaner
+local THEME = ADDON.UITheme
 
 ---------------------------------------------------------------------------
 -- Layout-Konstanten
 ---------------------------------------------------------------------------
 local MAIN_W, MAIN_H = 860, 620
-local INSET_PAD       = 10
-local GRID_COLS       = 7
-local GRID_ROWS       = 6
-local HEADER_H        = 22
-local MAX_ENTRIES     = 3   -- Max angezeigte Raids pro Tageskachel
+local PADDING_S = (THEME and THEME.spacing and THEME.spacing.S) or 8
+local PADDING_M = (THEME and THEME.spacing and THEME.spacing.M) or 12
+local PADDING_L = (THEME and THEME.spacing and THEME.spacing.L) or 16
+local INSET_PAD = PADDING_M
+local GRID_COLS = 7
+local GRID_ROWS = 6
+local HEADER_H  = 22
+local ROW_H     = 22
+local COL_W     = 110
+local MAX_ENTRIES = 3   -- Max angezeigte Raids pro Tageskachel
 
 local WEEKDAYS    = { "Mo", "Di", "Mi", "Do", "Fr", "Sa", "So" }
 local MONTH_NAMES = {
@@ -64,6 +70,12 @@ RP.detailFrame = nil
 ---------------------------------------------------------------------------
 
 local function ApplyBackdrop(frame, bd, r, g, b, a, er, eg, eb, ea)
+    if THEME and THEME.ApplyTheme and (bd == BD_MAIN or bd == BD_INSET or bd == BD_CELL) then
+        local variant = (bd == BD_INSET and "inset") or (bd == BD_CELL and "cell") or "panel"
+        THEME:ApplyTheme(frame, variant)
+        if er then frame:SetBackdropBorderColor(er, eg, eb, ea or 1) end
+        return
+    end
     frame:SetBackdrop(bd)
     frame:SetBackdropColor(r or 0.05, g or 0.05, b or 0.08, a or 0.95)
     if er then frame:SetBackdropBorderColor(er, eg, eb, ea or 1) end
@@ -78,9 +90,14 @@ local function MakeMovable(frame)
 end
 
 local function CreateLabel(parent, fontObj, text, ...)
-    local fs = parent:CreateFontString(nil, "OVERLAY", fontObj or "GameFontNormal")
-    if text then fs:SetText(text) end
-    if select("#", ...) > 0 then fs:SetPoint(...) end
+    local fs
+    if THEME and THEME.CreateLabelGold then
+        fs = THEME:CreateLabelGold(parent, fontObj, text, ...)
+    else
+        fs = parent:CreateFontString(nil, "OVERLAY", fontObj or "GameFontNormal")
+        if text then fs:SetText(text) end
+        if select("#", ...) > 0 then fs:SetPoint(...) end
+    end
     return fs
 end
 
@@ -379,12 +396,12 @@ local function EnsureCreateDialog()
     createFrame = CreateFrame("Frame", "GASRPCreateFrame", UIParent, "BackdropTemplate")
     createFrame:SetSize(420, 300)
     createFrame:SetPoint("CENTER")
-    createFrame:SetFrameStrata("TOOLTIP")
+    createFrame:SetFrameStrata("DIALOG")
     ApplyBackdrop(createFrame, BD_MAIN, 0.05, 0.05, 0.08, 0.97, 0.6, 0.5, 0.2)
     MakeMovable(createFrame)
     createFrame:Hide()
 
-    createFrame.title = CreateLabel(createFrame, "GameFontNormalLarge", "", "TOPLEFT", 16, -14)
+    createFrame.title = CreateLabel(createFrame, "GameFontNormalLarge", "", "TOPLEFT", PADDING_L, -PADDING_L)
     local cb = CreateFrame("Button", nil, createFrame, "UIPanelCloseButton")
     cb:SetPoint("TOPRIGHT", -2, -2)
 
@@ -422,7 +439,7 @@ local function EnsureCreateDialog()
     createFrame.saveBtn = CreateBtn(createFrame, 120, 26, "Speichern", function()
         RP:SaveRaidFromDialog()
     end)
-    createFrame.saveBtn:SetPoint("BOTTOMLEFT", 16, 14)
+    createFrame.saveBtn:SetPoint("BOTTOMLEFT", PADDING_L, PADDING_M)
 
     -- Abbrechen
     CreateBtn(createFrame, 100, 26, "Abbrechen", function()
@@ -444,9 +461,10 @@ function RP:OpenCreateRaid(dateStr)
     createFrame.infoLabel:SetText("")
     createFrame.selectedKey = ADDON.RaidData.raids[1].key
     InitDropdown()
+    if THEME and THEME.RaiseGlobalDropdowns then THEME:RaiseGlobalDropdowns(24) end
     local def = ADDON.RaidData:GetByKey(createFrame.selectedKey)
     UIDropDownMenu_SetText(createFrame.raidDD, def.name .. "  (" .. def.size .. ")")
-    createFrame:SetFrameStrata("TOOLTIP")
+    createFrame:SetFrameStrata("DIALOG")
     createFrame:Raise()
     createFrame:Show()
 end
@@ -472,11 +490,12 @@ function RP:OpenEditRaid(raidId)
     createFrame.infoLabel:SetText("")
     createFrame.selectedKey = raid.raidKey
     InitDropdown()
+    if THEME and THEME.RaiseGlobalDropdowns then THEME:RaiseGlobalDropdowns(24) end
     local def = ADDON.RaidData:GetByKey(raid.raidKey)
     if def then
         UIDropDownMenu_SetText(createFrame.raidDD, def.name .. "  (" .. def.size .. ")")
     end
-    createFrame:SetFrameStrata("TOOLTIP")
+    createFrame:SetFrameStrata("DIALOG")
     createFrame:Raise()
     createFrame:Show()
 end
@@ -554,6 +573,7 @@ local function ShowCommentPopup(playerName, comment)
         commentPopup:SetSize(320, 160)
         commentPopup:SetPoint("CENTER")
         commentPopup:SetFrameStrata("TOOLTIP")
+        commentPopup:SetFrameLevel(40)
         ApplyBackdrop(commentPopup, BD_MAIN, 0.06, 0.06, 0.1, 0.97, 0.5, 0.4, 0.2)
         MakeMovable(commentPopup)
 
@@ -580,7 +600,7 @@ local requestRows = {}
 local rosterRows  = {}
 
 local DETAIL_W, DETAIL_H = 1100, 700
-local ROSTER_ROW_H = 22
+local ROSTER_ROW_H = ROW_H
 
 local function GetOrCreateRequestRow(index, parent)
     if requestRows[index] then return requestRows[index] end
@@ -750,7 +770,7 @@ local function ConfigureAsData(row, signup, yPos, even)
     if comment ~= "" then
         local short = (string.len(comment) > 18)
             and (string.sub(comment, 1, 16) .. "..") or comment
-        row.commentBtn.text:SetText("|cff888888" .. short .. "|r")
+        row.commentBtn.text:SetText("|cffaaaaaa" .. short .. "|r")
         local pName = signup.name or "?"
         row.commentBtn:SetScript("OnClick", function()
             ShowCommentPopup(pName, comment)
@@ -778,6 +798,7 @@ local function EnsureDetailView()
     df:SetSize(DETAIL_W, DETAIL_H)
     df:SetPoint("CENTER", 220, 0)
     df:SetFrameStrata("DIALOG")
+    df:SetFrameLevel(30)
     ApplyBackdrop(df, BD_MAIN, 0.05, 0.05, 0.08, 0.97, 0.5, 0.4, 0.15)
     MakeMovable(df)
     df:Hide()
@@ -787,7 +808,7 @@ local function EnsureDetailView()
     cb:SetPoint("TOPRIGHT", -2, -2)
 
     -- Header
-    df.titleLabel   = CreateLabel(df, "GameFontNormalLarge", "", "TOPLEFT", 16, -14)
+    df.titleLabel   = CreateLabel(df, "GameFontNormalLarge", "", "TOPLEFT", PADDING_L, -PADDING_L)
     df.dateLabel    = CreateLabel(df, "GameFontHighlightSmall", "", "TOPLEFT", 16, -38)
     df.noteLabel    = CreateLabel(df, "GameFontHighlightSmall", "", "TOPLEFT", 16, -54)
     df.noteLabel:SetWidth(DETAIL_W - 40)
@@ -874,7 +895,7 @@ local function EnsureDetailView()
     df.editBtn = CreateBtn(df, 100, 24, "Bearbeiten", function()
         if df.currentRaidId then RP:OpenEditRaid(df.currentRaidId) end
     end)
-    df.editBtn:SetPoint("BOTTOMLEFT", 16, 14)
+    df.editBtn:SetPoint("BOTTOMLEFT", PADDING_L, PADDING_M)
 
     df.deleteBtn = CreateBtn(df, 100, 24, "|cffff4444Loeschen|r", function()
         if df.currentRaidId then RP:ConfirmDeleteRaid(df.currentRaidId) end
@@ -955,13 +976,14 @@ function RP:ShowRaidDetail(raidId)
         .. " von " .. timeText .. " Uhr|r")
     df.noteLabel:SetText(
         (raid.note and raid.note ~= "") and ("|cffaaaaaa" .. raid.note .. "|r") or "")
-    df.creatorLabel:SetText("|cff888888Erstellt von: " .. (raid.createdBy or "?") .. "|r")
+    df.creatorLabel:SetText("|cffaaaaaaErstellt von: " .. (raid.createdBy or "?") .. "|r")
 
     -- Spec-Dropdown initialisieren
     local _, classToken = UnitClass("player")
     local myName   = UnitName("player")
     local mySignup = raid.signups and raid.signups[myName]
     InitSpecDropdown(df, classToken, mySignup and mySignup.spec or nil)
+    if THEME and THEME.RaiseGlobalDropdowns then THEME:RaiseGlobalDropdowns(24) end
 
     -- Mein Status
     if mySignup then
@@ -972,7 +994,7 @@ function RP:ShowRaidDetail(raidId)
         df.myStatusLabel:SetText("Dein Status: |cff" .. c .. n .. "|r" .. specStr)
         df.commentEB:SetText(mySignup.comment or "")
     else
-        df.myStatusLabel:SetText("|cff888888Noch nicht angemeldet.|r")
+        df.myStatusLabel:SetText("|cffaaaaaaNoch nicht angemeldet.|r")
         df.commentEB:SetText("")
     end
 
@@ -1079,7 +1101,7 @@ function RP:RefreshRoster(raidId)
         if comment ~= "" then
             local short = (string.len(comment) > 12)
                 and (string.sub(comment, 1, 10) .. "..") or comment
-            row.commentBtn.text:SetText("|cff888888" .. short .. "|r")
+            row.commentBtn.text:SetText("|cffaaaaaa" .. short .. "|r")
             local pName = signup.name or "?"
             row.commentBtn:SetScript("OnClick", function()
                 ShowCommentPopup(pName, comment)
@@ -1363,7 +1385,7 @@ function RP:Init()
 
     -- Titel
     CreateLabel(rpFrame, "GameFontNormalLarge",
-        "|cffff8800GAS|r |cffffffffRaidplaner|r", "TOPLEFT", 16, -14)
+        "|cffff8800GAS|r |cffffffffRaidplaner|r", "TOPLEFT", PADDING_L, -PADDING_L)
 
     -- Close
     local closeBtn = CreateFrame("Button", nil, rpFrame, "UIPanelCloseButton")
@@ -1433,7 +1455,7 @@ function RP:Init()
 
     -- Hinweis unten links
     local hint = rpFrame:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
-    hint:SetText("|cff888888Klicke auf einen Raid fuer Details & Anmeldung."
+    hint:SetText("|cffaaaaaaKlicke auf einen Raid fuer Details & Anmeldung."
         .. "  GM/Raidleiter: [+] zum Ansetzen.|r")
     hint:SetPoint("BOTTOMLEFT", 16, 8)
 
