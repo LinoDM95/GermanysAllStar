@@ -244,39 +244,58 @@ function RP:RebuildPlannerData()
         roleBuckets[pInfo.roleKey][#roleBuckets[pInfo.roleKey] + 1] = pInfo
     end
 
+    local plannedByRaidRole = {}
+    local maxPlannedRowsByRole = { TANK = 0, HEAL = 0, DD = 0 }
+    for _, raid in ipairs(columns) do
+        plannedByRaidRole[raid.id] = { TANK = {}, HEAL = {}, DD = {} }
+        for name, signup in pairs(raid.signups or {}) do
+            if IsSignupPlanned(signup) then
+                local roleKey = GetSignupRole(signup)
+                plannedByRaidRole[raid.id][roleKey][#plannedByRaidRole[raid.id][roleKey] + 1] = {
+                    name = name,
+                    class = signup.class,
+                }
+            end
+        end
+        for _, roleKey in ipairs({ "TANK", "HEAL", "DD" }) do
+            table.sort(plannedByRaidRole[raid.id][roleKey], function(a, b) return a.name < b.name end)
+            local c = #plannedByRaidRole[raid.id][roleKey]
+            if c > maxPlannedRowsByRole[roleKey] then maxPlannedRowsByRole[roleKey] = c end
+        end
+    end
+
     local rows = {}
     rows[#rows + 1] = { isSection = true, sectionType = "header", title = "Raid Kader" }
     for _, roleKey in ipairs({ "TANK", "HEAL", "DD" }) do
         local rolePlayers = roleBuckets[roleKey] or {}
-        local plannedPlayers, waitingPlayers = {}, {}
+        local plannedCount = 0
+        local waitingPlayers = {}
         for _, pInfo in ipairs(rolePlayers) do
             if pInfo.plannedAny then
-                plannedPlayers[#plannedPlayers + 1] = pInfo
+                plannedCount = plannedCount + 1
             else
                 waitingPlayers[#waitingPlayers + 1] = pInfo
             end
         end
-        table.sort(plannedPlayers, function(a, b) return a.name < b.name end)
         table.sort(waitingPlayers, function(a, b) return a.name < b.name end)
 
         rows[#rows + 1] = {
             isSection = true,
             sectionType = "role",
             roleKey = roleKey,
-            planned = #plannedPlayers,
+            planned = plannedCount,
             total = #rolePlayers,
             inRoster = true,
         }
 
-        for _, pInfo in ipairs(plannedPlayers) do
+        for slotIndex = 1, maxPlannedRowsByRole[roleKey] do
             rows[#rows + 1] = {
                 isSection = false,
-                name = pInfo.name,
-                class = pInfo.class,
-                classColor = pInfo.classColor,
                 roleKey = roleKey,
-                plannedAny = true,
+                rosterSlot = true,
+                slotIndex = slotIndex,
                 inRoster = true,
+                plannedAny = true,
             }
         end
 
@@ -306,7 +325,7 @@ function RP:RebuildPlannerData()
         }
     end
 
-    plannerFrame.planData = { columns = columns, rows = rows, playersByName = playersByName }
+    plannerFrame.planData = { columns = columns, rows = rows, playersByName = playersByName, plannedByRaidRole = plannedByRaidRole }
 end
 
 local function MakeCell(parent)
@@ -446,19 +465,24 @@ function RP:RefreshPlanner()
                 row.text:SetText("|cff" .. meta.color .. meta.label .. "|r |cff00ff00(" .. rowData.planned .. " Dabei, " .. rowData.total .. " gesamt)|r")
             end
         else
-            row.playerName = rowData.name
-            local selected = plannerFrame.selectedPlayerName == rowData.name
-            local isPlanned = rowData.plannedAny
-            if selected then
-                row:SetBackdropColor(0.25, 0.20, 0.05, 0.55)
-            else
+            if rowData.rosterSlot then
+                row.playerName = nil
                 row:SetBackdropColor(0, 0, 0, 0.20)
-            end
-            if rowData.classColor then
-                local cr, cg, cb = rowData.classColor.r * 255, rowData.classColor.g * 255, rowData.classColor.b * 255
-                row.text:SetText(string.format("|cff%02x%02x%02x%s|r", cr, cg, cb, rowData.name))
+                row.text:SetText("")
             else
-                row.text:SetText("|cffffffff" .. rowData.name .. "|r")
+                row.playerName = rowData.name
+                local selected = plannerFrame.selectedPlayerName == rowData.name
+                if selected then
+                    row:SetBackdropColor(0.25, 0.20, 0.05, 0.55)
+                else
+                    row:SetBackdropColor(0, 0, 0, 0.20)
+                end
+                if rowData.classColor then
+                    local cr, cg, cb = rowData.classColor.r * 255, rowData.classColor.g * 255, rowData.classColor.b * 255
+                    row.text:SetText(string.format("|cff%02x%02x%02x%s|r", cr, cg, cb, rowData.name))
+                else
+                    row.text:SetText("|cffffffff" .. rowData.name .. "|r")
+                end
             end
         end
         row:Show()
@@ -500,32 +524,48 @@ function RP:RefreshPlanner()
                 end
                 cell:Show()
             else
-                local s = raid.signups and raid.signups[rowData.name]
-                local selectedName = plannerFrame.selectedPlayerName
-                local isSelectedRow = selectedName == rowData.name
-                local isPlanned = s and IsSignupPlanned(s)
-                cell.canAssign = isSelectedRow and s ~= nil
-
-                local txt = ""
-                if s then
-                    if isPlanned then
-                        local classCode = GetClassColorCode(s.class or rowData.class, "ffffffff")
-                        txt = "|c" .. classCode .. rowData.name .. "|r"
-                    elseif rowData.plannedAny then
-                        txt = ""
+                if rowData.rosterSlot then
+                    local plannedList = (((pd.plannedByRaidRole or {})[raid.id] or {})[rowData.roleKey]) or {}
+                    local entry = plannedList[rowData.slotIndex]
+                    cell.canAssign = false
+                    if entry then
+                        local classCode = GetClassColorCode(entry.class, "ffffffff")
+                        cell.label:SetText("|c" .. classCode .. entry.name .. "|r")
+                        cell:SetBackdropColor(0.10, 0.10, 0.14, 0.55)
+                        cell:SetBackdropBorderColor(0.35, 0.35, 0.45, 0.5)
                     else
-                        local specInfo = ADDON.RaidData:GetSpecInfo(s.class, s.spec or "")
-                        txt = "|cff888888" .. ((specInfo and specInfo.name) or (s.spec or "-")) .. "|r"
+                        cell.label:SetText("")
+                        cell:SetBackdropColor(0.08, 0.08, 0.12, 0.25)
+                        cell:SetBackdropBorderColor(0.2, 0.2, 0.2, 0.2)
                     end
-                end
-                cell.label:SetText(txt)
-
-                if cell.canAssign then
-                    cell:SetBackdropColor(0.16, 0.15, 0.05, 0.52)
-                    cell:SetBackdropBorderColor(0.95, 0.85, 0.2, 0.8)
                 else
-                    cell:SetBackdropColor(0.08, 0.08, 0.12, 0.5)
-                    cell:SetBackdropBorderColor(0.3, 0.3, 0.3, 0.35)
+                    local s = raid.signups and raid.signups[rowData.name]
+                    local selectedName = plannerFrame.selectedPlayerName
+                    local isSelectedRow = selectedName == rowData.name
+                    local isPlanned = s and IsSignupPlanned(s)
+                    cell.canAssign = isSelectedRow and s ~= nil
+
+                    local txt = ""
+                    if s then
+                        if isPlanned then
+                            local classCode = GetClassColorCode(s.class or rowData.class, "ffffffff")
+                            txt = "|c" .. classCode .. rowData.name .. "|r"
+                        elseif rowData.plannedAny then
+                            txt = ""
+                        else
+                            local specInfo = ADDON.RaidData:GetSpecInfo(s.class, s.spec or "")
+                            txt = "|cff888888" .. ((specInfo and specInfo.name) or (s.spec or "-")) .. "|r"
+                        end
+                    end
+                    cell.label:SetText(txt)
+
+                    if cell.canAssign then
+                        cell:SetBackdropColor(0.16, 0.15, 0.05, 0.52)
+                        cell:SetBackdropBorderColor(0.95, 0.85, 0.2, 0.8)
+                    else
+                        cell:SetBackdropColor(0.08, 0.08, 0.12, 0.5)
+                        cell:SetBackdropBorderColor(0.3, 0.3, 0.3, 0.35)
+                    end
                 end
                 cell:Show()
             end
