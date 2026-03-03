@@ -63,9 +63,8 @@ local function CollectNavigableWeekStarts()
 end
 
 local function ClampWeekStart(weekStartTs)
-    local currentWeek = CurrentWeekStart()
-    if not weekStartTs or weekStartTs < currentWeek then
-        return currentWeek
+    if not weekStartTs then
+        return CurrentWeekStart()
     end
     return weekStartTs
 end
@@ -422,10 +421,6 @@ function RP:RefreshPlanner()
     RefreshPlannerFilterDropdownOptions()
     plannerFrame.weekStartTs = ClampWeekStart(plannerFrame.weekStartTs)
     self:RebuildPlannerData()
-    local weekStarts = CollectNavigableWeekStarts()
-    plannerFrame.navigableWeekStarts = weekStarts
-    local atMinWeek = plannerFrame.weekStartTs <= weekStarts[1]
-    local atMaxWeek = plannerFrame.weekStartTs >= weekStarts[#weekStarts]
     local pd = plannerFrame.planData or { rows = {}, columns = {}, playersByName = {} }
 
     for _, h in ipairs(pHeaders) do h:Hide() end
@@ -577,14 +572,22 @@ function RP:RefreshPlanner()
                 if rowData.rosterSlot then
                     local plannedList = (((pd.plannedByRaidRole or {})[raid.id] or {})[rowData.roleKey]) or {}
                     local entry = plannedList[rowData.slotIndex]
-                    cell.canAssign = false
+                    local isHoveredEntry = entry and (plannerFrame.hoveredPlayerName == entry.name)
+                    cell.canAssign = entry ~= nil
+                    cell.rowName = entry and entry.name or nil
                     if entry then
                         local classCode = GetClassColorCode(entry.class, "ffffffff")
                         cell.label:SetText("|c" .. classCode .. entry.name .. "|r")
-                        cell:SetBackdropColor(0.10, 0.10, 0.14, 0.55)
-                        cell:SetBackdropBorderColor(0.35, 0.35, 0.45, 0.5)
+                        if isHoveredEntry then
+                            cell:SetBackdropColor(0.08, 0.16, 0.22, 0.62)
+                            cell:SetBackdropBorderColor(0.50, 0.85, 1.0, 0.85)
+                        else
+                            cell:SetBackdropColor(0.10, 0.10, 0.14, 0.55)
+                            cell:SetBackdropBorderColor(0.35, 0.35, 0.45, 0.5)
+                        end
                     else
                         cell.label:SetText("")
+                        cell.rowName = nil
                         cell:SetBackdropColor(0.08, 0.08, 0.12, 0.25)
                         cell:SetBackdropBorderColor(0.2, 0.2, 0.2, 0.2)
                     end
@@ -630,8 +633,9 @@ function RP:RefreshPlanner()
     if plannerFrame.hScroll:GetValue() > maxH then plannerFrame.hScroll:SetValue(maxH) end
 
     plannerFrame.weekLabel:SetText("|cffffd100Mi-Di:|r " .. date("%d.%m.%Y", plannerFrame.weekStartTs) .. " - " .. date("%d.%m.%Y", plannerFrame.weekStartTs + 6 * 86400))
-    if plannerFrame.prevWeekBtn then plannerFrame.prevWeekBtn:SetEnabled(not atMinWeek) end
-    if plannerFrame.nextWeekBtn then plannerFrame.nextWeekBtn:SetEnabled(not atMaxWeek) end
+    if plannerFrame.weekJumpEB then
+        plannerFrame.weekJumpEB:SetText(date("%Y-%m-%d", plannerFrame.weekStartTs))
+    end
 end
 
 function RP:OpenPlanner()
@@ -697,8 +701,40 @@ function RP:EnsurePlannerFrame()
     ddLabel:SetPoint("LEFT", nextB, "RIGHT", 10, 0)
     ddLabel:SetText("Raidfilter:")
 
+    plannerFrame.weekJumpEB = CreateFrame("EditBox", nil, plannerFrame, "InputBoxTemplate")
+    plannerFrame.weekJumpEB:SetSize(96, 20)
+    plannerFrame.weekJumpEB:SetPoint("LEFT", ddLabel, "RIGHT", 76, 0)
+    plannerFrame.weekJumpEB:SetAutoFocus(false)
+    plannerFrame.weekJumpEB:SetScript("OnEscapePressed", function(self) self:ClearFocus() end)
+    plannerFrame.weekJumpEB:SetScript("OnEnterPressed", function(self)
+        self:ClearFocus()
+        local weekStart = WeekStartFromDate(strtrim(self:GetText() or ""))
+        if not weekStart then
+            ADDON:Print("Datum bitte als YYYY-MM-DD eingeben.")
+            return
+        end
+        plannerFrame.userNavigatedWeek = true
+        plannerFrame.weekStartTs = weekStart
+        RP:RefreshPlanner()
+    end)
+
+    local jumpBtn = CreateFrame("Button", nil, plannerFrame, "UIPanelButtonTemplate")
+    jumpBtn:SetSize(54, 22)
+    jumpBtn:SetPoint("LEFT", plannerFrame.weekJumpEB, "RIGHT", 6, 0)
+    jumpBtn:SetText("Go")
+    jumpBtn:SetScript("OnClick", function()
+        local weekStart = WeekStartFromDate(strtrim(plannerFrame.weekJumpEB:GetText() or ""))
+        if not weekStart then
+            ADDON:Print("Datum bitte als YYYY-MM-DD eingeben.")
+            return
+        end
+        plannerFrame.userNavigatedWeek = true
+        plannerFrame.weekStartTs = weekStart
+        RP:RefreshPlanner()
+    end)
+
     plannerFrame.filterDD = CreateFrame("Frame", "GASRPPlannerFilterDD", plannerFrame, "UIDropDownMenuTemplate")
-    plannerFrame.filterDD:SetPoint("LEFT", ddLabel, "RIGHT", -8, -2)
+    plannerFrame.filterDD:SetPoint("LEFT", jumpBtn, "RIGHT", -8, -2)
     UIDropDownMenu_SetWidth(plannerFrame.filterDD, 130)
 
     local leftX, topY = 12, -74
@@ -800,24 +836,12 @@ function RP:EnsurePlannerFrame()
 
     prev:SetScript("OnClick", function()
         plannerFrame.userNavigatedWeek = true
-        local weekStarts = plannerFrame.navigableWeekStarts or CollectNavigableWeekStarts()
-        for i = #weekStarts, 1, -1 do
-            if weekStarts[i] < plannerFrame.weekStartTs then
-                plannerFrame.weekStartTs = weekStarts[i]
-                break
-            end
-        end
+        plannerFrame.weekStartTs = plannerFrame.weekStartTs - (7 * 86400)
         RP:RefreshPlanner()
     end)
     nextB:SetScript("OnClick", function()
         plannerFrame.userNavigatedWeek = true
-        local weekStarts = plannerFrame.navigableWeekStarts or CollectNavigableWeekStarts()
-        for i = 1, #weekStarts do
-            if weekStarts[i] > plannerFrame.weekStartTs then
-                plannerFrame.weekStartTs = weekStarts[i]
-                break
-            end
-        end
+        plannerFrame.weekStartTs = plannerFrame.weekStartTs + (7 * 86400)
         RP:RefreshPlanner()
     end)
 
