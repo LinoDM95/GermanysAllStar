@@ -5,7 +5,7 @@ if not RP then return end
 
 local ROLE_COL_W, NAME_COL_W = 80, 150
 local RAID_COL_W, ROW_H = 120, 22
-local HEADER_H, GAP = 22, 4
+local HEADER_H, GAP = 42, 4
 
 local plannerFrame
 local pRows, pCells, pHeaders = {}, {}, {}
@@ -55,6 +55,19 @@ local function IsSignupPlanned(signup)
         return signup.confirmed == true
     end
     return signup.status == "YES"
+end
+
+local function GetPlannedRoleCounts(raid)
+    local counts = { TANK = 0, HEAL = 0, DD = 0 }
+    for _, signup in pairs((raid and raid.signups) or {}) do
+        if IsSignupPlanned(signup) then
+            local role = GetSignupRole(signup)
+            if counts[role] ~= nil then
+                counts[role] = counts[role] + 1
+            end
+        end
+    end
+    return counts
 end
 
 local function DetermineInitialWeekStart()
@@ -326,6 +339,9 @@ end
 
 function RP:RefreshPlanner()
     if not plannerFrame or not plannerFrame:IsShown() then return end
+    if ADDON.UITheme and ADDON.UITheme.RaiseGlobalDropdowns then
+        ADDON.UITheme:RaiseGlobalDropdowns(32)
+    end
     RefreshPlannerFilterDropdownOptions()
     self:RebuildPlannerData()
     local pd = plannerFrame.planData or { rows = {}, columns = {} }
@@ -353,7 +369,14 @@ function RP:RefreshPlanner()
         h:SetPoint("TOPLEFT", (i - 1) * RAID_COL_W, 0)
         local def = ADDON.RaidData:GetByKey(raid.raidKey)
         local short = def and def.short or raid.raidKey or "?"
-        h.t:SetText("|cffffd100" .. short .. "|r\n|cffcccccc" .. FormatHeadDate(raid.date) .. "|r")
+        local planned = GetPlannedRoleCounts(raid)
+        h.t:SetText(
+            "|cffffd100" .. short .. "|r\n"
+            .. "|cffcccccc" .. FormatHeadDate(raid.date) .. "|r\n"
+            .. "|cff66aaffT:" .. planned.TANK .. "|r "
+            .. "|cff66ff88H:" .. planned.HEAL .. "|r "
+            .. "|cffff7777D:" .. planned.DD .. "|r"
+        )
         h:Show()
     end
 
@@ -575,20 +598,33 @@ function RP:EnsurePlannerFrame()
     end)
 
     plannerFrame.rightSF:EnableMouseWheel(true)
+    plannerFrame.rightHeaderSF:EnableMouseWheel(true)
+
+    local function ScrollHorizontal(delta)
+        local step = 36 * (delta > 0 and -1 or 1)
+        local v = plannerFrame.hScroll:GetValue() + step
+        local min, max = plannerFrame.hScroll:GetMinMaxValues()
+        if v < min then v = min elseif v > max then v = max end
+        plannerFrame.hScroll:SetValue(v)
+    end
+
+    local function ScrollVertical(delta)
+        local step = 24 * (delta > 0 and -1 or 1)
+        local v = plannerFrame.vScroll:GetValue() + step
+        local min, max = plannerFrame.vScroll:GetMinMaxValues()
+        if v < min then v = min elseif v > max then v = max end
+        plannerFrame.vScroll:SetValue(v)
+    end
+
     plannerFrame.rightSF:SetScript("OnMouseWheel", function(_, delta)
         if IsShiftKeyDown() then
-            local step = 36 * (delta > 0 and -1 or 1)
-            local v = plannerFrame.hScroll:GetValue() + step
-            local min, max = plannerFrame.hScroll:GetMinMaxValues()
-            if v < min then v = min elseif v > max then v = max end
-            plannerFrame.hScroll:SetValue(v)
+            ScrollHorizontal(delta)
         else
-            local step = 24 * (delta > 0 and -1 or 1)
-            local v = plannerFrame.vScroll:GetValue() + step
-            local min, max = plannerFrame.vScroll:GetMinMaxValues()
-            if v < min then v = min elseif v > max then v = max end
-            plannerFrame.vScroll:SetValue(v)
+            ScrollVertical(delta)
         end
+    end)
+    plannerFrame.rightHeaderSF:SetScript("OnMouseWheel", function(_, delta)
+        ScrollHorizontal(delta)
     end)
 
     plannerFrame.weekStartTs = DetermineInitialWeekStart()
