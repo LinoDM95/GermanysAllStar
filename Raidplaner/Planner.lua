@@ -38,6 +38,38 @@ local function WeekRangeByStart(weekStartTs)
     return weekStartTs, weekStartTs + 6 * 86400
 end
 
+local function CurrentWeekStart()
+    local now = date("*t")
+    return WeekStartFromDate(string.format("%04d-%02d-%02d", now.year, now.month, now.day))
+end
+
+local function CollectNavigableWeekStarts()
+    local currentWeek = CurrentWeekStart()
+    local startsByTs = { [currentWeek] = true }
+
+    for _, raid in pairs(ADDON.RaidplanerDB:GetRaids()) do
+        local weekStart = WeekStartFromDate(raid.date)
+        if weekStart and weekStart >= currentWeek then
+            startsByTs[weekStart] = true
+        end
+    end
+
+    local starts = {}
+    for weekStart in pairs(startsByTs) do
+        starts[#starts + 1] = weekStart
+    end
+    table.sort(starts)
+    return starts
+end
+
+local function ClampWeekStart(weekStartTs)
+    local currentWeek = CurrentWeekStart()
+    if not weekStartTs or weekStartTs < currentWeek then
+        return currentWeek
+    end
+    return weekStartTs
+end
+
 local function FormatHeadDate(dateStr)
     local y, m, d = (dateStr or ""):match("^(%d%d%d%d)%-(%d%d)%-(%d%d)$")
     if not y then return dateStr or "?" end
@@ -97,8 +129,7 @@ local function GetClassColorCode(class, fallback)
 end
 
 local function DetermineInitialWeekStart()
-    local now = date("*t")
-    local fallback = WeekStartFromDate(string.format("%04d-%02d-%02d", now.year, now.month, now.day))
+    local fallback = CurrentWeekStart()
 
     local bestFuture, bestPast
     local nowTs = time()
@@ -114,7 +145,7 @@ local function DetermineInitialWeekStart()
     end
 
     if bestFuture then return WeekStartFromDate(date("%Y-%m-%d", bestFuture)) end
-    if bestPast then return WeekStartFromDate(date("%Y-%m-%d", bestPast)) end
+    if bestPast then return ClampWeekStart(WeekStartFromDate(date("%Y-%m-%d", bestPast))) end
     return fallback
 end
 
@@ -389,7 +420,12 @@ function RP:RefreshPlanner()
         ADDON.UITheme:RaiseGlobalDropdowns(32)
     end
     RefreshPlannerFilterDropdownOptions()
+    plannerFrame.weekStartTs = ClampWeekStart(plannerFrame.weekStartTs)
     self:RebuildPlannerData()
+    local weekStarts = CollectNavigableWeekStarts()
+    plannerFrame.navigableWeekStarts = weekStarts
+    local atMinWeek = plannerFrame.weekStartTs <= weekStarts[1]
+    local atMaxWeek = plannerFrame.weekStartTs >= weekStarts[#weekStarts]
     local pd = plannerFrame.planData or { rows = {}, columns = {}, playersByName = {} }
 
     for _, h in ipairs(pHeaders) do h:Hide() end
@@ -436,14 +472,16 @@ function RP:RefreshPlanner()
             row.text:SetPoint("LEFT", 6, 0)
             row.text:SetWidth(leftW - 12)
             row.text:SetJustifyH("LEFT")
-            row:SetScript("OnClick", function(self)
-                if not RP:CanManageRaids() or self.isSection or not self.playerName then return end
-                if plannerFrame.selectedPlayerName == self.playerName then
-                    plannerFrame.selectedPlayerName = nil
-                else
-                    plannerFrame.selectedPlayerName = self.playerName
-                end
+            row:SetScript("OnEnter", function(self)
+                if self.isSection or not self.playerName then return end
+                plannerFrame.hoveredPlayerName = self.playerName
                 RP:RefreshPlanner()
+            end)
+            row:SetScript("OnLeave", function(self)
+                if plannerFrame.hoveredPlayerName == self.playerName then
+                    plannerFrame.hoveredPlayerName = nil
+                    RP:RefreshPlanner()
+                end
             end)
             pRows[rowIdx] = row
         end
@@ -471,8 +509,8 @@ function RP:RefreshPlanner()
                 row.text:SetText("")
             else
                 row.playerName = rowData.name
-                local selected = plannerFrame.selectedPlayerName == rowData.name
-                if selected then
+                local hovered = plannerFrame.hoveredPlayerName == rowData.name
+                if hovered then
                     row:SetBackdropColor(0.25, 0.20, 0.05, 0.55)
                 else
                     row:SetBackdropColor(0, 0, 0, 0.20)
@@ -492,17 +530,29 @@ function RP:RefreshPlanner()
             local cell = pCells[idx]
             if not cell then
                 cell = MakeCell(plannerFrame.rightContent)
+                cell:SetScript("OnEnter", function(self)
+                    if self.rowName then
+                        plannerFrame.hoveredPlayerName = self.rowName
+                        RP:RefreshPlanner()
+                    end
+                end)
+                cell:SetScript("OnLeave", function(self)
+                    if self.rowName and plannerFrame.hoveredPlayerName == self.rowName then
+                        plannerFrame.hoveredPlayerName = nil
+                        RP:RefreshPlanner()
+                    end
+                end)
                 cell:SetScript("OnMouseUp", function(self)
                     if not RP:CanManageRaids() then return end
-                    local selectedName = plannerFrame.selectedPlayerName
-                    if not selectedName or not self.canAssign then return end
-                    RP:PlannerAssignPlayerToRaid(selectedName, self.raidId)
+                    if not self.canAssign or not self.rowName then return end
+                    RP:PlannerAssignPlayerToRaid(self.rowName, self.raidId)
                 end)
                 pCells[idx] = cell
             end
             cell:SetPoint("TOPLEFT", (colIdx - 1) * RAID_COL_W + 1, -(rowIdx - 1) * ROW_H - 1)
             cell.raidId = raid.id
             cell.raidObj = raid
+            cell.rowName = (not rowData.isSection and not rowData.rosterSlot) and rowData.name or nil
 
             if rowData.isSection then
                 cell.canAssign = false
@@ -540,10 +590,9 @@ function RP:RefreshPlanner()
                     end
                 else
                     local s = raid.signups and raid.signups[rowData.name]
-                    local selectedName = plannerFrame.selectedPlayerName
-                    local isSelectedRow = selectedName == rowData.name
+                    local isHoveredRow = plannerFrame.hoveredPlayerName == rowData.name
                     local isPlanned = s and IsSignupPlanned(s)
-                    cell.canAssign = isSelectedRow and s ~= nil
+                    cell.canAssign = s ~= nil
 
                     local txt = ""
                     if s then
@@ -559,7 +608,7 @@ function RP:RefreshPlanner()
                     end
                     cell.label:SetText(txt)
 
-                    if cell.canAssign then
+                    if cell.canAssign and isHoveredRow then
                         cell:SetBackdropColor(0.16, 0.15, 0.05, 0.52)
                         cell:SetBackdropBorderColor(0.95, 0.85, 0.2, 0.8)
                     else
@@ -581,6 +630,8 @@ function RP:RefreshPlanner()
     if plannerFrame.hScroll:GetValue() > maxH then plannerFrame.hScroll:SetValue(maxH) end
 
     plannerFrame.weekLabel:SetText("|cffffd100Mi-Di:|r " .. date("%d.%m.%Y", plannerFrame.weekStartTs) .. " - " .. date("%d.%m.%Y", plannerFrame.weekStartTs + 6 * 86400))
+    if plannerFrame.prevWeekBtn then plannerFrame.prevWeekBtn:SetEnabled(not atMinWeek) end
+    if plannerFrame.nextWeekBtn then plannerFrame.nextWeekBtn:SetEnabled(not atMaxWeek) end
 end
 
 function RP:OpenPlanner()
@@ -629,6 +680,7 @@ function RP:EnsurePlannerFrame()
     prev:SetSize(28, 22)
     prev:SetPoint("TOPLEFT", 12, -42)
     prev:SetText("<")
+    plannerFrame.prevWeekBtn = prev
 
     plannerFrame.weekLabel = plannerFrame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
     plannerFrame.weekLabel:SetPoint("LEFT", prev, "RIGHT", 8, 0)
@@ -639,6 +691,7 @@ function RP:EnsurePlannerFrame()
     nextB:SetSize(28, 22)
     nextB:SetPoint("LEFT", plannerFrame.weekLabel, "RIGHT", 8, 0)
     nextB:SetText(">")
+    plannerFrame.nextWeekBtn = nextB
 
     local ddLabel = plannerFrame:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
     ddLabel:SetPoint("LEFT", nextB, "RIGHT", 10, 0)
@@ -743,15 +796,28 @@ function RP:EnsurePlannerFrame()
 
     plannerFrame.weekStartTs = DetermineInitialWeekStart()
     plannerFrame.raidFilter = "ALL"
+    plannerFrame.hoveredPlayerName = nil
 
     prev:SetScript("OnClick", function()
         plannerFrame.userNavigatedWeek = true
-        plannerFrame.weekStartTs = plannerFrame.weekStartTs - (7 * 86400)
+        local weekStarts = plannerFrame.navigableWeekStarts or CollectNavigableWeekStarts()
+        for i = #weekStarts, 1, -1 do
+            if weekStarts[i] < plannerFrame.weekStartTs then
+                plannerFrame.weekStartTs = weekStarts[i]
+                break
+            end
+        end
         RP:RefreshPlanner()
     end)
     nextB:SetScript("OnClick", function()
         plannerFrame.userNavigatedWeek = true
-        plannerFrame.weekStartTs = plannerFrame.weekStartTs + (7 * 86400)
+        local weekStarts = plannerFrame.navigableWeekStarts or CollectNavigableWeekStarts()
+        for i = 1, #weekStarts do
+            if weekStarts[i] > plannerFrame.weekStartTs then
+                plannerFrame.weekStartTs = weekStarts[i]
+                break
+            end
+        end
         RP:RefreshPlanner()
     end)
 
