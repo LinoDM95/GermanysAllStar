@@ -49,6 +49,36 @@ local function GetSignupRole(signup)
     return role
 end
 
+local function IsSignupPlanned(signup)
+    if not signup then return false end
+    if signup.confirmed ~= nil then
+        return signup.confirmed == true
+    end
+    return signup.status == "YES"
+end
+
+local function DetermineInitialWeekStart()
+    local now = date("*t")
+    local fallback = WeekStartFromDate(string.format("%04d-%02d-%02d", now.year, now.month, now.day))
+
+    local bestFuture, bestPast
+    local nowTs = time()
+    for _, raid in pairs(ADDON.RaidplanerDB:GetRaids()) do
+        local ts = ParseDate(raid.date)
+        if ts then
+            if ts >= nowTs then
+                if (not bestFuture) or ts < bestFuture then bestFuture = ts end
+            else
+                if (not bestPast) or ts > bestPast then bestPast = ts end
+            end
+        end
+    end
+
+    if bestFuture then return WeekStartFromDate(date("%Y-%m-%d", bestFuture)) end
+    if bestPast then return WeekStartFromDate(date("%Y-%m-%d", bestPast)) end
+    return fallback
+end
+
 local function EnsureGhost()
     if dragGhost then return end
     dragGhost = CreateFrame("Frame", nil, UIParent, "BackdropTemplate")
@@ -160,7 +190,7 @@ local function BuildDragHighlights()
                     for _, other in ipairs(pd.columns or {}) do
                         if other.id ~= raid.id and other.raidKey == raid.raidKey then
                             local os = other.signups and other.signups[d.name]
-                            if os and os.confirmed then
+                            if os and IsSignupPlanned(os) then
                                 c.validDrop = false
                                 break
                             end
@@ -184,8 +214,8 @@ function RP:PlannerAssignPlayerToRaid(name, roleKey, raidId)
     local s = raid.signups[name]
     if GetSignupRole(s) ~= roleKey then return end
 
-    local wasConfirmed = s.confirmed
-    if wasConfirmed then
+    local wasPlanned = IsSignupPlanned(s)
+    if wasPlanned then
         s.confirmed = false
     else
         s.confirmed = true
@@ -200,7 +230,7 @@ function RP:PlannerAssignPlayerToRaid(name, roleKey, raidId)
             local ots = ParseDate(other.date)
             if other.id ~= raid.id and ots and ots >= fromTs and ots <= toTs and other.raidKey == raid.raidKey then
                 local os = other.signups and other.signups[name]
-                if os and os.confirmed then
+                if os and IsSignupPlanned(os) then
                     os.confirmed = false
                     os.updatedAt = s.updatedAt
                     ADDON.RaidplanerDB:SaveRaid(other)
@@ -318,7 +348,7 @@ function RP:RefreshPlanner()
             if s and GetSignupRole(s) == rowData.roleKey then
                 local specInfo = ADDON.RaidData:GetSpecInfo(s.class, s.spec or "")
                 txt = "|cff888888" .. ((specInfo and specInfo.name) or rowData.roleKey) .. "|r"
-                if s.confirmed then
+                if IsSignupPlanned(s) then
                     txt = "|cff44ff44GEPLANT|r"
                 end
             end
@@ -346,6 +376,9 @@ function RP:OpenPlanner()
         return
     end
     if not plannerFrame then self:EnsurePlannerFrame() end
+    if plannerFrame and not plannerFrame.userNavigatedWeek then
+        plannerFrame.weekStartTs = DetermineInitialWeekStart()
+    end
     plannerFrame:Show()
     self:RefreshPlanner()
 end
@@ -482,15 +515,16 @@ function RP:EnsurePlannerFrame()
         end
     end)
 
-    local now = date("*t")
-    plannerFrame.weekStartTs = WeekStartFromDate(string.format("%04d-%02d-%02d", now.year, now.month, now.day))
+    plannerFrame.weekStartTs = DetermineInitialWeekStart()
     plannerFrame.raidFilter = "ALL"
 
     prev:SetScript("OnClick", function()
+        plannerFrame.userNavigatedWeek = true
         plannerFrame.weekStartTs = plannerFrame.weekStartTs - (7 * 86400)
         RP:RefreshPlanner()
     end)
     nextB:SetScript("OnClick", function()
+        plannerFrame.userNavigatedWeek = true
         plannerFrame.weekStartTs = plannerFrame.weekStartTs + (7 * 86400)
         RP:RefreshPlanner()
     end)
