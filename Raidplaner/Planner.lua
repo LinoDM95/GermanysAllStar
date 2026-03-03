@@ -96,19 +96,6 @@ local function GetClassColorCode(class, fallback)
     return fallback
 end
 
-local function IsPlayerPlannedInSameRaidWeek(name, raidKey, exceptRaidId)
-    if not plannerFrame or not plannerFrame.planData then return false end
-    for _, other in ipairs(plannerFrame.planData.columns or {}) do
-        if other.raidKey == raidKey and other.id ~= exceptRaidId then
-            local os = other.signups and other.signups[name]
-            if os and IsSignupPlanned(os) then
-                return true
-            end
-        end
-    end
-    return false
-end
-
 local function DetermineInitialWeekStart()
     local now = date("*t")
     local fallback = WeekStartFromDate(string.format("%04d-%02d-%02d", now.year, now.month, now.day))
@@ -517,12 +504,7 @@ function RP:RefreshPlanner()
                 local selectedName = plannerFrame.selectedPlayerName
                 local isSelectedRow = selectedName == rowData.name
                 local isPlanned = s and IsSignupPlanned(s)
-                local blocked = false
-                if selectedName and raid.raidKey then
-                    blocked = IsPlayerPlannedInSameRaidWeek(selectedName, raid.raidKey, raid.id)
-                end
-
-                cell.canAssign = isSelectedRow and s ~= nil and (not blocked or isPlanned)
+                cell.canAssign = isSelectedRow and s ~= nil
 
                 local txt = ""
                 if s then
@@ -541,9 +523,6 @@ function RP:RefreshPlanner()
                 if cell.canAssign then
                     cell:SetBackdropColor(0.16, 0.15, 0.05, 0.52)
                     cell:SetBackdropBorderColor(0.95, 0.85, 0.2, 0.8)
-                elseif selectedName and s and blocked and not isPlanned then
-                    cell:SetBackdropColor(0.12, 0.04, 0.04, 0.50)
-                    cell:SetBackdropBorderColor(0.8, 0.2, 0.2, 0.55)
                 else
                     cell:SetBackdropColor(0.08, 0.08, 0.12, 0.5)
                     cell:SetBackdropBorderColor(0.3, 0.3, 0.3, 0.35)
