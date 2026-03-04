@@ -1,49 +1,98 @@
 local _, ADDON = ...
 
--- Compatibility wrapper: keeps existing Raidplaner API while using the
--- shared GuildStockPlanner-based design system.
 ADDON.UITheme = ADDON.UITheme or {}
 local THEME = ADDON.UITheme
-local Theme = ADDON.Theme
-local DS = ADDON.DesignSystem
 
-THEME.colors = Theme.colors
-THEME.spacing = { S = Theme.spacing.gap, M = Theme.spacing.padding, L = Theme.spacing.sectionGap }
+THEME.colors = {
+    gold      = { 1.00, 0.82, 0.00, 1.00 },
+    secondary = { 0.66, 0.66, 0.66, 1.00 },
+    danger    = { 1.00, 0.27, 0.27, 1.00 },
+    success   = { 0.27, 1.00, 0.27, 1.00 },
+}
+
+THEME.spacing = {
+    S = 8,
+    M = 12,
+    L = 16,
+}
+
+-- Layout-Tokens fuer alle Raidplaner-Fenster
 THEME.layout = {
-    padding = Theme.spacing.padding,
-    gap = Theme.spacing.gap,
-    sectionGap = Theme.spacing.sectionGap,
-    rowHeight = Theme.sizes.rowHeight,
-    headerHeight = Theme.sizes.headerHeight,
-    footerHeight = Theme.sizes.footerHeight,
-    minWidth = Theme.sizes.minWindowW,
-    minHeight = Theme.sizes.minWindowH,
+    padding      = 12,
+    gap          = 8,
+    sectionGap   = 12,
+    rowHeight    = 22,
+    headerHeight = 42,
+    footerHeight = 32,
+    minWidth     = 720,
+    minHeight    = 480,
 }
-THEME.fonts = Theme.fonts
+
+-- Standard-Fonts (koennen spaeter pro Frame genutzt werden)
+THEME.fonts = {
+    normal  = "GameFontNormal",
+    small   = "GameFontNormalSmall",
+    header  = "GameFontNormalLarge",
+    muted   = "GameFontDisableSmall",
+}
+
 THEME.backdrops = {
-    panel = Theme.backdrops.window,
-    inset = Theme.backdrops.panel,
-    cell = Theme.backdrops.panel,
-    button = Theme.backdrops.panel,
+    panel = {
+        bgFile   = "Interface\\Tooltips\\UI-Tooltip-Background",
+        edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
+        tile = true, tileSize = 16, edgeSize = 16,
+        insets = { left = 4, right = 4, top = 4, bottom = 4 },
+    },
+    inset = {
+        bgFile   = "Interface\\Tooltips\\UI-Tooltip-Background",
+        edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
+        tile = true, tileSize = 16, edgeSize = 12,
+        insets = { left = 3, right = 3, top = 3, bottom = 3 },
+    },
+    cell = {
+        bgFile   = "Interface\\Tooltips\\UI-Tooltip-Background",
+        edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
+        tile = true, tileSize = 16, edgeSize = 8,
+        insets = { left = 1, right = 1, top = 1, bottom = 1 },
+    },
+    button = {
+        bgFile   = "Interface\\Tooltips\\UI-Tooltip-Background",
+        edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
+        tile = true, tileSize = 16, edgeSize = 12,
+        insets = { left = 2, right = 2, top = 2, bottom = 2 },
+    },
 }
+
+local function SetFSColor(fs, color)
+    if not fs then return end
+    fs:SetTextColor(color[1], color[2], color[3], color[4] or 1)
+end
 
 function THEME:ApplyTheme(frame, variant)
-    if variant == "inset" or variant == "cell" then
-        DS.ApplyPanelStyle(frame)
-    else
-        DS.ApplyWindowStyle(frame)
+    if not frame or not frame.SetBackdrop then return end
+    local bd = self.backdrops[variant or "panel"] or self.backdrops.panel
+    frame:SetBackdrop(bd)
+    -- Einheitlicher, NICHT transparenter Hintergrund + dezenter Rahmen
+    local bgR, bgG, bgB, bgA = 0.04, 0.04, 0.07, 1.00
+    if variant == "inset" then
+        bgR, bgG, bgB, bgA = 0.05, 0.06, 0.10, 1.00
+    elseif variant == "cell" then
+        bgR, bgG, bgB, bgA = 0.06, 0.06, 0.10, 1.00
     end
+    frame:SetBackdropColor(bgR, bgG, bgB, bgA)
+    -- Rahmenfarbe, die gut zum dunklen Hintergrund passt (dezent blaeulich)
+    frame:SetBackdropBorderColor(0.35, 0.40, 0.55, 1.00)
 end
 
 function THEME:CreatePanel(parent)
     local f = CreateFrame("Frame", nil, parent, "BackdropTemplate")
-    DS.ApplyWindowStyle(f)
+    self:ApplyTheme(f, "panel")
     return f
 end
 
 function THEME:CreateInset(parent)
     local f = CreateFrame("Frame", nil, parent, "BackdropTemplate")
-    DS.ApplyPanelStyle(f)
+    self:ApplyTheme(f, "inset")
     return f
 end
 
@@ -55,20 +104,62 @@ function THEME:CreateSeparator(parent, alpha)
 end
 
 function THEME:CreateLabelGold(parent, fontObj, text, ...)
-    local variant = "normal"
-    if fontObj == "GameFontDisableSmall" then variant = "muted"
-    elseif fontObj == "GameFontNormalSmall" or fontObj == "GameFontHighlightSmall" then variant = "small"
-    elseif fontObj == "GameFontNormalLarge" then variant = "header" end
-    return DS.CreateLabel(parent, variant, text, ...)
+    local fs = parent:CreateFontString(nil, "OVERLAY", fontObj or "GameFontNormal")
+    SetFSColor(fs, self.colors.gold)
+    if text then fs:SetText(text) end
+    if select("#", ...) > 0 then fs:SetPoint(...) end
+    return fs
 end
 
 function THEME:CreateButtonRed(parent, width, height, text, onClick)
     local btn = CreateFrame("Button", nil, parent, "BackdropTemplate")
     btn:SetSize(width, height)
-    btn._txt = btn:CreateFontString(nil, "OVERLAY", Theme.fonts.small)
+    btn:SetBackdrop(self.backdrops.button)
+
+    btn._normal = { 0.35, 0.07, 0.07, 0.98 }
+    btn._hover  = { 0.48, 0.12, 0.12, 1.00 }
+    btn._down   = { 0.26, 0.05, 0.05, 1.00 }
+    btn._border = { 0.75, 0.30, 0.18, 0.95 }
+
+    btn:SetBackdropColor(unpack(btn._normal))
+    btn:SetBackdropBorderColor(unpack(btn._border))
+
+    btn._txt = btn:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
     btn._txt:SetPoint("CENTER")
     btn._txt:SetText(text or "")
-    DS.ApplyButtonStyle(btn, "primary")
+    SetFSColor(btn._txt, self.colors.gold)
+
+    local hl = btn:CreateTexture(nil, "HIGHLIGHT")
+    hl:SetAllPoints()
+    hl:SetColorTexture(1, 1, 1, 0.08)
+
+    btn:SetScript("OnMouseDown", function(self)
+        if self:IsEnabled() then self:SetBackdropColor(unpack(self._down)) end
+    end)
+    btn:SetScript("OnMouseUp", function(self)
+        if self:IsEnabled() and MouseIsOver(self) then
+            self:SetBackdropColor(unpack(self._hover))
+        elseif self:IsEnabled() then
+            self:SetBackdropColor(unpack(self._normal))
+        end
+    end)
+    btn:SetScript("OnEnter", function(self)
+        if self:IsEnabled() then self:SetBackdropColor(unpack(self._hover)) end
+    end)
+    btn:SetScript("OnLeave", function(self)
+        if self:IsEnabled() then self:SetBackdropColor(unpack(self._normal)) end
+    end)
+    btn:SetScript("OnEnable", function(self)
+        self:SetBackdropColor(unpack(self._normal))
+        self:SetBackdropBorderColor(unpack(self._border))
+        SetFSColor(self._txt, THEME.colors.gold)
+    end)
+    btn:SetScript("OnDisable", function(self)
+        self:SetBackdropColor(0.12, 0.12, 0.12, 0.85)
+        self:SetBackdropBorderColor(0.25, 0.25, 0.25, 0.80)
+        SetFSColor(self._txt, THEME.colors.secondary)
+    end)
+
     if onClick then btn:SetScript("OnClick", onClick) end
     return btn
 end
@@ -88,13 +179,13 @@ function THEME:RaiseGlobalDropdowns(level)
     for i = 1, UIDROPDOWNMENU_MAXLEVELS or 3 do
         local list = _G["DropDownList" .. i]
         if list then
-            local lvl = strataLevel + i
+            local level = strataLevel + i
             list:SetFrameStrata("TOOLTIP")
-            list:SetFrameLevel(lvl)
+            list:SetFrameLevel(level)
             if not list._gasRaiseHooked then
                 list:HookScript("OnShow", function(self)
                     self:SetFrameStrata("TOOLTIP")
-                    self:SetFrameLevel(lvl)
+                    self:SetFrameLevel(level)
                 end)
                 list._gasRaiseHooked = true
             end
