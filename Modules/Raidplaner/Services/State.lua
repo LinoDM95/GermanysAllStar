@@ -9,7 +9,7 @@ local RP = ADDON.Raidplaner
 
 --- Setzt den Status eines Raids und aktualisiert Timestamps + UI.
 -- @param raidId   ID des Raids
--- @param newState String: "PLANNED", "CONFIRMED", "CANCELLED"
+-- @param newState String: "PLANNED" (offen), "CONFIRMED", "CANCELLED"
 -- @param broadcast boolean – ob Aenderung ueber Sync verbreitet werden soll
 function RP:SetRaidState(raidId, newState, broadcast)
     local raid = ADDON.RaidplanerDB:GetRaid(raidId)
@@ -38,7 +38,7 @@ function RP:SetRaidState(raidId, newState, broadcast)
 
     local stateLabel = (newState == "CONFIRMED" and "best\u00e4tigt")
         or (newState == "CANCELLED" and "abgesagt")
-        or "geplant"
+        or "offen"
 
     if ADDON.RaidplanerDB.AddLog then
         ADDON.RaidplanerDB:AddLog(string.format(

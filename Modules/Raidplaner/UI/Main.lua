@@ -155,7 +155,8 @@ function RP:EnsureLogFrame()
     logFrame:SetSize(740, 420)
     logFrame:SetPoint("CENTER")
     logFrame:SetFrameStrata("DIALOG")
-    ApplyBackdrop(logFrame, BD_MAIN, 0.05, 0.05, 0.08, 0.97, 0.5, 0.5, 0.5)
+    ApplyBackdrop(logFrame, BD_MAIN)
+    logFrame:EnableMouse(true) -- Klicks blockieren
     MakeMovable(logFrame)
     logFrame:Hide()
 
@@ -169,9 +170,17 @@ function RP:EnsureLogFrame()
     logFrame.infoText:SetWidth(420)
     logFrame.infoText:SetJustifyH("LEFT")
 
+    -- Spalten-Header im Stil des GuildStockPlanner-Logs
+    local hdr = CreateFrame("Frame", nil, logFrame)
+    hdr:SetPoint("TOPLEFT", 8, -58)
+    hdr:SetPoint("TOPRIGHT", -30, -58)
+    hdr:SetHeight(18)
+    CreateLabel(hdr, "GameFontNormalSmall", "Zeitpunkt", "LEFT", 8, 0)
+    CreateLabel(hdr, "GameFontNormalSmall", "Ereignis",  "LEFT", 110, 0)
+
     -- ScrollFrame im gleichen Stil wie GuildStockPlanner-Sync-Log
     local sf = CreateFrame("ScrollFrame", "GASRPLogScroll", logFrame, "UIPanelScrollFrameTemplate")
-    sf:SetPoint("TOPLEFT", 10, -64)
+    sf:SetPoint("TOPLEFT", 10, -78)
     sf:SetPoint("BOTTOMRIGHT", -30, 14)
     logFrame.scroll = sf
 
@@ -250,6 +259,16 @@ local function FormatRaidTimeRange(timeStr)
         local toText   = string.format("%02d:%02d", tonumber(th) or 0, tonumber(tm) or 0)
         return fromText, toText
     end
+
+
+    -- Wire/Legacy-Format: "HHMM-HHMM" (kommt aus Sync ohne ":")
+    local f2h, f2m, t2h, t2m = timeStr:match("^(%d%d)(%d%d)%-(%d%d)(%d%d)$")
+    if f2h and f2m and t2h and t2m then
+        local fromText = string.format("%02d:%02d", tonumber(f2h) or 0, tonumber(f2m) or 0)
+        local toText   = string.format("%02d:%02d", tonumber(t2h) or 0, tonumber(t2m) or 0)
+        return fromText, toText
+    end
+
 
     -- Fallback: nur Startzeit "HH:MM"
     local sh, sm = timeStr:match("^(%d%d):(%d%d)$")
@@ -567,8 +586,11 @@ local function EnsureCreateDialog()
     createFrame = CreateFrame("Frame", "GASRPCreateFrame", UIParent, "BackdropTemplate")
     createFrame:SetSize(420, 300)
     createFrame:SetPoint("CENTER")
-    createFrame:SetFrameStrata("DIALOG")
-    ApplyBackdrop(createFrame, BD_MAIN, 0.05, 0.05, 0.08, 0.97, 0.6, 0.5, 0.2)
+    -- Immer ganz vorne, auch vor Planner/anderen Fenstern
+    createFrame:SetFrameStrata("TOOLTIP")
+    createFrame:SetToplevel(true)
+    ApplyBackdrop(createFrame, BD_MAIN)
+    createFrame:EnableMouse(true) -- Klicks blockieren
     MakeMovable(createFrame)
     createFrame:Hide()
 
@@ -602,8 +624,14 @@ local function EnsureCreateDialog()
     createFrame.noteEB:SetPoint("TOPLEFT", 80, -114)
     createFrame.noteEB:SetMaxLetters(180)
 
+    -- Softreserve-Link
+    CreateLabel(createFrame, "GameFontNormalSmall", "Softreserve:", "TOPLEFT", 16, -148)
+    createFrame.srLinkEB = CreateEB(createFrame, 310, 22)
+    createFrame.srLinkEB:SetPoint("TOPLEFT", 80, -144)
+    createFrame.srLinkEB:SetMaxLetters(255)
+
     -- Fehler-/Info-Label
-    createFrame.infoLabel = CreateLabel(createFrame, "GameFontHighlightSmall", "", "TOPLEFT", 16, -150)
+    createFrame.infoLabel = CreateLabel(createFrame, "GameFontHighlightSmall", "", "TOPLEFT", 16, -176)
     createFrame.infoLabel:SetWidth(380)
 
     -- Speichern
@@ -629,13 +657,17 @@ function RP:OpenCreateRaid(dateStr)
     createFrame.timeFromEB:SetText("20:00")
     createFrame.timeToEB:SetText("23:00")
     createFrame.noteEB:SetText("")
+    if createFrame.srLinkEB then
+        createFrame.srLinkEB:SetText("")
+    end
     createFrame.infoLabel:SetText("")
     createFrame.selectedKey = ADDON.RaidData.raids[1].key
     InitDropdown()
     if THEME and THEME.RaiseGlobalDropdowns then THEME:RaiseGlobalDropdowns(24) end
     local def = ADDON.RaidData:GetByKey(createFrame.selectedKey)
     UIDropDownMenu_SetText(createFrame.raidDD, def.name .. "  (" .. def.size .. ")")
-    createFrame:SetFrameStrata("DIALOG")
+    createFrame:SetFrameStrata("TOOLTIP")
+    createFrame:SetToplevel(true)
     createFrame:Raise()
     createFrame:Show()
 end
@@ -658,6 +690,9 @@ function RP:OpenEditRaid(raidId)
     createFrame.timeFromEB:SetText(tFrom or raid.time or "20:00")
     createFrame.timeToEB:SetText(tTo or "23:00")
     createFrame.noteEB:SetText(raid.note or "")
+    if createFrame.srLinkEB then
+        createFrame.srLinkEB:SetText(raid.srLink or "")
+    end
     createFrame.infoLabel:SetText("")
     createFrame.selectedKey = raid.raidKey
     InitDropdown()
@@ -666,7 +701,8 @@ function RP:OpenEditRaid(raidId)
     if def then
         UIDropDownMenu_SetText(createFrame.raidDD, def.name .. "  (" .. def.size .. ")")
     end
-    createFrame:SetFrameStrata("DIALOG")
+    createFrame:SetFrameStrata("TOOLTIP")
+    createFrame:SetToplevel(true)
     createFrame:Raise()
     createFrame:Show()
 end
@@ -691,7 +727,8 @@ function RP:SaveRaidFromDialog()
     end
 
     local timeStr = tFrom .. "-" .. tTo
-    local note = strtrim(createFrame.noteEB:GetText())
+    local note   = strtrim(createFrame.noteEB:GetText())
+    local srLink = createFrame.srLinkEB and strtrim(createFrame.srLinkEB:GetText() or "") or ""
     local def  = ADDON.RaidData:GetByKey(key)
     local now  = time()
     local raid
@@ -707,6 +744,7 @@ function RP:SaveRaidFromDialog()
             raid.date      = dateStr
             raid.time      = timeStr
             raid.note      = note
+            raid.srLink    = srLink
             raid.updatedAt = now
             raid.state     = raid.state or "PLANNED"
         end
@@ -719,6 +757,7 @@ function RP:SaveRaidFromDialog()
             date       = dateStr,
             time       = timeStr,
             note       = note,
+            srLink     = srLink,
             createdBy  = UnitName("player") or "?",
             createdAt  = now,
             updatedAt  = now,
@@ -768,7 +807,8 @@ local function ShowCommentPopup(playerName, comment)
         commentPopup:SetPoint("CENTER")
         commentPopup:SetFrameStrata("TOOLTIP")
         commentPopup:SetFrameLevel(40)
-        ApplyBackdrop(commentPopup, BD_MAIN, 0.06, 0.06, 0.1, 0.97, 0.5, 0.4, 0.2)
+        ApplyBackdrop(commentPopup, BD_MAIN)
+        commentPopup:EnableMouse(true) -- Klicks blockieren
         MakeMovable(commentPopup)
 
         local closeCB = CreateFrame("Button", nil, commentPopup, "UIPanelCloseButton")
@@ -993,7 +1033,8 @@ local function EnsureDetailView()
     df:SetPoint("CENTER", 220, 0)
     df:SetFrameStrata("DIALOG")
     df:SetFrameLevel(30)
-    ApplyBackdrop(df, BD_MAIN, 0.05, 0.05, 0.08, 0.97, 0.5, 0.4, 0.15)
+    ApplyBackdrop(df, BD_MAIN)
+    df:EnableMouse(true) -- Klicks blockieren
     MakeMovable(df)
     df:Hide()
     RP.detailFrame = df
@@ -1004,9 +1045,59 @@ local function EnsureDetailView()
     -- Header
     df.titleLabel   = CreateLabel(df, "GameFontNormalLarge", "", "TOPLEFT", PADDING_L, -PADDING_L)
     df.dateLabel    = CreateLabel(df, "GameFontHighlightSmall", "", "TOPLEFT", 16, -38)
-    df.noteLabel    = CreateLabel(df, "GameFontHighlightSmall", "", "TOPLEFT", 16, -54)
+
+    -- Softreserve-Link (sichtbar & klickbar, direkt unter dem Datum)
+    df.srLinkBtn = CreateFrame("Button", nil, df)
+    df.srLinkBtn:SetPoint("TOPLEFT", 16, -54)
+    df.srLinkBtn:SetSize(DETAIL_W - 40, 18)
+    df.srLinkBtn:SetHitRectInsets(0, 0, 0, 0)
+    df.srLinkBtn.text = CreateLabel(df.srLinkBtn, "GameFontHighlightSmall", "", "LEFT", 0, 0)
+    df.srLinkBtn.text:SetWidth(DETAIL_W - 40)
+    df.srLinkBtn.text:SetJustifyH("LEFT")
+    df.srLinkBtn:EnableMouse(true)
+    df.srLinkBtn:SetScript("OnClick", function(self)
+        local parent = self:GetParent()
+        if not parent or not parent.srLink or parent.srLink == "" then return end
+        
+        -- Versuche, den Link direkt zu öffnen über SetItemRef (falls unterstützt)
+        -- Format für URL-Links in WoW: |Hurl:URL|h[Text]|h
+        local success = pcall(function()
+            if SetItemRef then
+                -- Versuche, den Link als URL-Link zu öffnen
+                SetItemRef("url:" .. parent.srLink, parent.srLink, "LeftButton")
+            end
+        end)
+        
+        -- Fallback: Link ins Chat-Eingabefeld schreiben und markieren
+        if not success then
+            local eb = ChatEdit_ChooseBoxForSend() or (DEFAULT_CHAT_FRAME and DEFAULT_CHAT_FRAME.editBox)
+            if eb then
+                eb:Show()
+                eb:SetFocus()
+                eb:SetText(parent.srLink)
+                eb:HighlightText()
+            end
+            -- Zusätzlich: Link auch in den Chat ausgeben
+            ADDON:Print("|cff00c0ffSoftreserve-Link:|r " .. parent.srLink)
+        end
+    end)
+    df.srLinkBtn:SetScript("OnEnter", function(self)
+        local parent = self:GetParent()
+        if not parent or not parent.srLink or parent.srLink == "" then return end
+        GameTooltip:SetOwner(self, "ANCHOR_TOPLEFT")
+        GameTooltip:AddLine("Softreserve-Link", 1, 0.82, 0)
+        GameTooltip:AddLine(parent.srLink, 0.9, 0.9, 1, true)
+        GameTooltip:AddLine("Klicken zum Öffnen/Kopieren", 0.7, 0.7, 0.7)
+        GameTooltip:Show()
+    end)
+    df.srLinkBtn:SetScript("OnLeave", function()
+        GameTooltip:Hide()
+    end)
+
+    -- Notiz & Ersteller etwas hoeher, damit sie nicht mit Dropdowns kollidieren
+    df.noteLabel    = CreateLabel(df, "GameFontHighlightSmall", "", "TOPLEFT", 16, -68)
     df.noteLabel:SetWidth(DETAIL_W - 40)
-    df.creatorLabel = CreateLabel(df, "GameFontDisableSmall", "", "TOPLEFT", 16, -70)
+    df.creatorLabel = CreateLabel(df, "GameFontDisableSmall", "", "TOPLEFT", 16, -76)
 
     -- Raid-Status-Anzeige (z.B. Geplant, Bestätigt, Abgesagt)
     df.stateLabel = CreateLabel(df, "GameFontHighlightSmall", "", "TOPRIGHT", -16, -38)
@@ -1025,7 +1116,8 @@ local function EnsureDetailView()
     df.yesBtn:SetPoint("TOPLEFT", 16, btnY)
     df.maybeBtn = CreateBtn(df, 90, 24, "Vielleicht", function() RP:HandleSignup("MAYBE") end)
     df.maybeBtn:SetPoint("LEFT", df.yesBtn, "RIGHT", 4, 0)
-    df.noBtn    = CreateBtn(df, 90, 24, "Abwesend",   function() RP:HandleSignup("NO")    end)
+    -- "Abmelden" soll keinen Status "Abwesend" erzeugen, sondern die Anmeldung entfernen.
+    df.noBtn    = CreateBtn(df, 90, 24, "Abwesend",   function() RP:HandleSignup("UNREGISTER") end)
     df.noBtn:SetPoint("LEFT", df.maybeBtn, "RIGHT", 4, 0)
     df.benchBtn = CreateBtn(df, 90, 24, "Reserve",    function() RP:HandleSignup("BENCH") end)
     df.benchBtn:SetPoint("LEFT", df.noBtn, "RIGHT", 4, 0)
@@ -1096,13 +1188,18 @@ local function EnsureDetailView()
     end)
     df.deleteBtn:SetPoint("LEFT", df.editBtn, "RIGHT", 8, 0)
 
-    -- Raid bestaetigen / absagen (nur fuer GM / Raidlead sichtbar)
-    df.confirmRaidBtn = CreateBtn(df, 120, 24, "Raid bestätigen", function()
+    -- Raidstatus: Offen / Bestaetigen / Absagen (nur fuer GM / Raidlead sichtbar)
+    df.openRaidBtn = CreateBtn(df, 100, 24, "Offen", function()
+        if df.currentRaidId then RP:SetRaidState(df.currentRaidId, "PLANNED", true) end
+    end)
+    df.openRaidBtn:SetPoint("BOTTOMRIGHT", -270, 14)
+
+    df.confirmRaidBtn = CreateBtn(df, 120, 24, "Bestätigen", function()
         if df.currentRaidId then RP:SetRaidState(df.currentRaidId, "CONFIRMED", true) end
     end)
-    df.confirmRaidBtn:SetPoint("BOTTOMRIGHT", -150, 14)
+    df.confirmRaidBtn:SetPoint("LEFT", df.openRaidBtn, "RIGHT", 8, 0)
 
-    df.cancelRaidBtn = CreateBtn(df, 120, 24, "|cffff4444Raid absagen|r", function()
+    df.cancelRaidBtn = CreateBtn(df, 120, 24, "|cffff4444Absagen|r", function()
         if df.currentRaidId then RP:SetRaidState(df.currentRaidId, "CANCELLED", true) end
     end)
     df.cancelRaidBtn:SetPoint("LEFT", df.confirmRaidBtn, "RIGHT", 8, 0)
@@ -1172,6 +1269,31 @@ function RP:ShowRaidDetail(raidId)
         (raid.note and raid.note ~= "") and ("|cffaaaaaa" .. raid.note .. "|r") or "")
     df.creatorLabel:SetText("|cffaaaaaaErstellt von: " .. (raid.createdBy or "?") .. "|r")
 
+    -- Softreserve-Link-Anzeige aktualisieren
+    df.srLink = raid.srLink or ""
+    if df.srLink ~= "" then
+        df.srLinkBtn:Show()
+        df.srLinkBtn.text:SetText("|cff00c0ffSoftreserve:|r |cffffff00" .. df.srLink .. "|r  |cffaaaaaa(klicken zum Kopieren)|r")
+    else
+        df.srLinkBtn.text:SetText("")
+        df.srLinkBtn:Hide()
+    end
+
+    -- Raid-Status-Anzeige aktualisieren
+    local state = raid.state or "PLANNED"
+    local stateText, stateColor
+    if state == "CONFIRMED" then
+        stateText  = "best\u00e4tigt"
+        stateColor = "44ff44"
+    elseif state == "CANCELLED" then
+        stateText  = "abgesagt"
+        stateColor = "ff4444"
+    else
+        stateText  = "offen"
+        stateColor = "ffffd100"
+    end
+    df.stateLabel:SetText("|cff" .. stateColor .. "Status: " .. stateText .. "|r")
+
     -- Anmelde-Buttons vereinfachen:
     -- Immer nur "Anmelden" / "Abmelden" anzeigen, unabhaengig von Berechtigungen.
     local canManage = self:CanManageRaids()
@@ -1203,6 +1325,7 @@ function RP:ShowRaidDetail(raidId)
     -- Bearbeiten / Loeschen + Raidstatus-Buttons nur fuer Berechtigte
     df.editBtn:SetShown(canManage)
     df.deleteBtn:SetShown(canManage)
+    df.openRaidBtn:SetShown(canManage)
     df.confirmRaidBtn:SetShown(canManage)
     df.cancelRaidBtn:SetShown(canManage)
 
@@ -1469,11 +1592,11 @@ function RP:HandleSignup(status)
     local raid   = ADDON.RaidplanerDB:GetRaid(raidId)
     if not raid then return end
 
-    local myName           = UnitName("player")
-    local _, classToken    = UnitClass("player")
-    local comment          = strtrim(df.commentEB:GetText() or "")
-    local specKey          = df.selectedSpec or ""
-    local roleKey          = df.selectedRole or ""
+    local myName        = UnitName("player")
+    local _, classToken = UnitClass("player")
+    local comment       = strtrim(df.commentEB:GetText() or "")
+    local specKey       = df.selectedSpec or ""
+    local roleKey       = df.selectedRole or ""
 
     -- Rolle aus Spec ableiten falls nicht gesetzt
     if roleKey == "" and specKey ~= "" then
@@ -1481,41 +1604,80 @@ function RP:HandleSignup(status)
         if specInfo then roleKey = specInfo.role end
     end
 
-    local signup = {
-        name      = myName,
-        class     = classToken,
-        spec      = specKey,
-        role      = roleKey,
-        status    = status,
-        comment   = comment,
-        confirmed = false, -- erst nach manueller Bestaetigung durch Raidlead/GM
-        updatedAt = time(),
-    }
+    if status == "UNREGISTER" then
+        -- Spieler moechte sich komplett abmelden: Eintrag aus der Signup-Liste entfernen.
+        if raid.signups and raid.signups[myName] then
+            raid.signups[myName] = nil
+        end
 
-    if not raid.signups then raid.signups = {} end
-    raid.signups[myName] = signup
+        -- Ueber Sync allen anderen Clients signalisieren, dass diese Anmeldung geloescht wurde.
+        local tombstone = {
+            name      = myName,
+            class     = classToken,
+            spec      = "",
+            role      = "",
+            status    = "REMOVED",
+            comment   = "",
+            confirmed = false,
+            updatedAt = time(),
+        }
+        ADDON.RaidplanerSync:BroadcastSignup(raidId, tombstone)
 
-    ADDON.RaidplanerSync:BroadcastSignup(raidId, signup)
+        -- Log-Eintrag: klarer "abgemeldet"-Text ohne Statusfarbe.
+        local raidLabel = (raid.raidName or raid.raidKey or "?") .. " am " .. (raid.date or "?")
+        local timeLabelFrom, timeLabelTo = FormatRaidTimeRange(raid.time or "")
+        local timeLabel = timeLabelFrom
+        if timeLabelTo and timeLabelTo ~= "" then
+            timeLabel = timeLabelFrom .. " - " .. timeLabelTo
+        end
+        local logText = string.format(
+            "%s hat seine Anmeldung f\u00fcr %s (%s) zur\u00fcckgezogen.",
+            myName or "?",
+            raidLabel,
+            timeLabel or "?"
+        )
+        ADDON.RaidplanerDB:AddLog(logText)
+    else
+        local signup = {
+            name      = myName,
+            class     = classToken,
+            spec      = specKey,
+            role      = roleKey,
+            status    = status,
+            comment   = comment,
+            confirmed = false, -- erst nach manueller Bestaetigung durch Raidlead/GM
+            updatedAt = time(),
+        }
 
-    -- Log-Eintrag
-    local raidLabel = (raid.raidName or raid.raidKey or "?") .. " am " .. (raid.date or "?")
-    local timeLabelFrom, timeLabelTo = FormatRaidTimeRange(raid.time or "")
-    local timeLabel = timeLabelFrom
-    if timeLabelTo and timeLabelTo ~= "" then
-        timeLabel = timeLabelFrom .. " - " .. timeLabelTo
+        if not raid.signups then raid.signups = {} end
+        raid.signups[myName] = signup
+
+        ADDON.RaidplanerSync:BroadcastSignup(raidId, signup)
+
+        -- Log-Eintrag
+        local raidLabel = (raid.raidName or raid.raidKey or "?") .. " am " .. (raid.date or "?")
+        local timeLabelFrom, timeLabelTo = FormatRaidTimeRange(raid.time or "")
+        local timeLabel = timeLabelFrom
+        if timeLabelTo and timeLabelTo ~= "" then
+            timeLabel = timeLabelFrom .. " - " .. timeLabelTo
+        end
+        local logText = string.format(
+            "%s hat sich f\u00fcr %s (%s) mit Status \"%s\" angemeldet.",
+            myName or "?",
+            raidLabel,
+            timeLabel or "?",
+            STATUS_LABEL[status] or status
+        )
+        ADDON.RaidplanerDB:AddLog(logText)
     end
-    local logText = string.format(
-        "%s hat sich f\u00fcr %s (%s) mit Status \"%s\" angemeldet.",
-        myName or "?",
-        raidLabel,
-        timeLabel or "?",
-        STATUS_LABEL[status] or status
-    )
-    ADDON.RaidplanerDB:AddLog(logText)
 
     local specInfo = ADDON.RaidData:GetSpecInfo(classToken, specKey)
     local specStr  = specInfo and (" als " .. specInfo.name) or ""
-    ADDON:Print("Angemeldet: " .. (STATUS_LABEL[status] or status) .. specStr)
+    if status == "UNREGISTER" then
+        ADDON:Print("Abgemeldet von " .. (raid.raidName or raid.raidKey or "?"))
+    else
+        ADDON:Print("Angemeldet: " .. (STATUS_LABEL[status] or status) .. specStr)
+    end
     self:ShowRaidDetail(raidId)
 end
 
@@ -1636,7 +1798,8 @@ function RP:Init()
     rpFrame:SetSize(MAIN_W, MAIN_H)
     rpFrame:SetPoint("CENTER")
     rpFrame:SetFrameStrata("HIGH")
-    ApplyBackdrop(rpFrame, BD_MAIN, 0.04, 0.04, 0.07, 0.96, 0.55, 0.45, 0.2)
+    ApplyBackdrop(rpFrame, BD_MAIN)
+    rpFrame:EnableMouse(true) -- Klicks blockieren
     MakeMovable(rpFrame)
     rpFrame:Hide()
     tinsert(UISpecialFrames, "GASRaidplanerFrame")
@@ -1705,7 +1868,7 @@ function RP:Init()
     contentInset = CreateFrame("Frame", nil, rpFrame, "BackdropTemplate")
     contentInset:SetPoint("TOPLEFT", INSET_PAD, -72)
     contentInset:SetPoint("BOTTOMRIGHT", -INSET_PAD, 28)
-    ApplyBackdrop(contentInset, BD_INSET, 0.07, 0.07, 0.1, 0.85, 0.35, 0.35, 0.35)
+    ApplyBackdrop(contentInset, BD_INSET)
 
     -- Kalender-Content (innerhalb Inset)
     calendarContent = CreateFrame("Frame", nil, contentInset)

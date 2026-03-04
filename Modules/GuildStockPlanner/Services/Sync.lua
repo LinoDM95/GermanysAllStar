@@ -246,14 +246,22 @@ function Sync:Init()
         end
     end)
 
-    -- Queue-Verarbeitung (1 Nachricht pro 0.12s – respektiert WoW Throttle)
+    -- Queue-Verarbeitung (konservativ: 1 Nachricht pro 0.3s)
+    -- So bleiben wir deutlich unter den Blizzard-Throttle-Grenzen,
+    -- auch wenn andere Addons parallel senden.
     local elapsed = 0
     local queueFrame = CreateFrame("Frame")
     queueFrame:SetScript("OnUpdate", function(_, dt)
         elapsed = elapsed + dt
-        if elapsed < 0.12 then return end
+        if elapsed < 0.30 then return end
         elapsed = 0
         if #outQueue > 0 then
+            if #outQueue > 500 then
+                ADDON:Debug("GSP Sync: outQueue > 500, kappe alte Nachrichten.")
+                while #outQueue > 500 do
+                    table.remove(outQueue, 1)
+                end
+            end
             local msg = table.remove(outQueue, 1)
             SendMsg(msg)
         end

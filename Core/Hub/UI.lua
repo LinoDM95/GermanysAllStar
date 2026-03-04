@@ -36,7 +36,8 @@ local BD_CARD = {
 -- Lokale Refs
 ---------------------------------------------------------------------------
 local hubFrame
-local permFrame, permScrollContent, permRows
+local permFrame, permScrollContent, permRows, permSearchBox
+local permSearchText = ""
 local appCards = {}
 
 ---------------------------------------------------------------------------
@@ -193,8 +194,9 @@ local function CreatePermPanel()
     permFrame:SetPoint("CENTER", 240, 0)
     permFrame:SetFrameStrata("DIALOG")
     permFrame:SetBackdrop(BD_MAIN)
-    permFrame:SetBackdropColor(0.04, 0.04, 0.07, 0.97)
-    permFrame:SetBackdropBorderColor(0.7, 0.55, 0.15, 1)
+    permFrame:SetBackdropColor(0.04, 0.04, 0.07, 1.00)
+    permFrame:SetBackdropBorderColor(0.35, 0.40, 0.55, 1.00)
+    permFrame:EnableMouse(true) -- Klicks blockieren
     MakeMovable(permFrame)
     permFrame:Hide()
 
@@ -268,9 +270,29 @@ local function CreatePermPanel()
     sep2:SetPoint("TOPRIGHT", -12, -128)
     sep2:SetColorTexture(0.4, 0.4, 0.4, 0.3)
 
+    -- Suchleiste fuer Mitglieder (Filter nach Namen / Rang)
+    CreateLabel(permFrame, "GameFontNormalSmall", "Suche:", "TOPLEFT", 16, -140)
+    permSearchBox = CreateFrame("EditBox", "GASPermSearchBox", permFrame, "InputBoxTemplate")
+    permSearchBox:SetSize(200, 20)
+    permSearchBox:SetAutoFocus(false)
+    permSearchBox:SetPoint("TOPLEFT", 70, -138)
+    permSearchBox:SetScript("OnTextChanged", function(self)
+        permSearchText = (self:GetText() or ""):lower()
+        Hub:RefreshPermPanel()
+    end)
+    permSearchBox:SetScript("OnEscapePressed", function(self)
+        self:SetText("")
+        permSearchText = ""
+        self:ClearFocus()
+        Hub:RefreshPermPanel()
+    end)
+    permSearchBox:SetScript("OnEnterPressed", function(self)
+        self:ClearFocus()
+    end)
+
     -- ScrollFrame
     local scrollFrame = CreateFrame("ScrollFrame", nil, permFrame, "UIPanelScrollFrameTemplate")
-    scrollFrame:SetPoint("TOPLEFT", 8, -132)
+    scrollFrame:SetPoint("TOPLEFT", 8, -166)
     scrollFrame:SetPoint("BOTTOMRIGHT", -28, 50)
     local scrollContent = CreateFrame("Frame", nil, scrollFrame)
     scrollContent:SetSize(PERM_W - 48, 1)
@@ -365,18 +387,32 @@ function Hub:RefreshPermPanel()
         appPerms[app.key] = ADDON:GetPermissions(app.key)
     end
 
-    -- Gilden-Mitglieder sammeln und sortieren
+    -- Gilden-Mitglieder sammeln
     local members = {}
     for i = 1, numMembers do
         local name, rank, rankIndex, level, class = GetGuildRosterInfo(i)
         if name then
             local shortName = name:match("^([^-]+)") or name
-            table.insert(members, {
+            members[#members + 1] = {
                 name      = shortName,
                 rank      = rank or "?",
                 rankIndex = rankIndex or 99,
-            })
+            }
         end
+    end
+
+    -- Optionaler Text-Filter (Suche)
+    local filter = permSearchText and permSearchText:match("%S") and permSearchText or nil
+    if filter and filter ~= "" then
+        local filtered = {}
+        for _, m in ipairs(members) do
+            local n = m.name:lower()
+            local r = (m.rank or ""):lower()
+            if n:find(filter, 1, true) or r:find(filter, 1, true) then
+                filtered[#filtered + 1] = m
+            end
+        end
+        members = filtered
     end
 
     -- Sortierung: Offiziere oben, dann alphabetisch
@@ -521,8 +557,9 @@ function Hub:Init()
     hubFrame:SetPoint("CENTER")
     hubFrame:SetFrameStrata("HIGH")
     hubFrame:SetBackdrop(BD_MAIN)
-    hubFrame:SetBackdropColor(0.04, 0.04, 0.07, 0.97)
-    hubFrame:SetBackdropBorderColor(0.55, 0.45, 0.2, 1)
+    hubFrame:SetBackdropColor(0.04, 0.04, 0.07, 1.00)
+    hubFrame:SetBackdropBorderColor(0.35, 0.40, 0.55, 1.00)
+    hubFrame:EnableMouse(true) -- Klicks blockieren
     MakeMovable(hubFrame)
     hubFrame:Hide()
     tinsert(UISpecialFrames, "GASHubFrame")

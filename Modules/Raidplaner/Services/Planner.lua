@@ -237,16 +237,22 @@ local function RefreshPlannerFilterDropdownOptions()
     UIDropDownMenu_SetText(plannerFrame.filterDD, label)
 end
 
+
 function RP:RebuildPlannerData()
     if not plannerFrame then return end
-    local weekStartTs = plannerFrame.weekStartTs
-    local fromTs, toTs = WeekRangeByStart(weekStartTs)
+
+    -- Woche (Mi→Di) anhand weekStartTs filtern
     local raidFilter = plannerFrame.raidFilter
+    local weekStart  = NormalizeWeekStartTs(plannerFrame.weekStartTs)
+    local fromTs, toTs = WeekRangeByStart(weekStart)
 
     local columns = {}
     for _, raid in pairs(ADDON.RaidplanerDB:GetRaids()) do
         local ts = ParseDate(raid.date)
-        if ts and ts >= fromTs and ts <= toTs and (not raidFilter or raidFilter == "ALL" or raid.raidKey == raidFilter) then
+        if ts
+            and ts >= fromTs and ts <= toTs
+            and (not raidFilter or raidFilter == "ALL" or raid.raidKey == raidFilter)
+        then
             columns[#columns + 1] = raid
         end
     end
@@ -433,21 +439,8 @@ function RP:RefreshPlanner()
         ADDON.UITheme:RaiseGlobalDropdowns(32)
     end
     plannerFrame.weekStartTs = NormalizeWeekStartTs(plannerFrame.weekStartTs)
-    ADDON:Debug("Planner", "RefreshPlanner start, weekStartTs =", date("%Y-%m-%d", plannerFrame.weekStartTs))
-
-    -- WeekLabel frueh setzen, damit es sichtbar bleibt, selbst wenn spaeter
-    -- im Aufbau ein Fehler auftreten sollte.
-    do
-        local startTs = plannerFrame.weekStartTs or CurrentWeekStart()
-        local endTs   = startTs + 6 * 86400
-        if plannerFrame.weekLabel then
-            plannerFrame.weekLabel:SetText(string.format(
-                "|cffffd100Raidwoche|r  %s - %s",
-                date("%d.%m.%Y", startTs),
-                date("%d.%m.%Y", endTs)
-            ))
-        end
-    end
+    if plannerFrame.UpdateWeekLabel then plannerFrame:UpdateWeekLabel() end
+    ADDON:Debug("Planner", "RefreshPlanner start (Wochenansicht)")
 
     RefreshPlannerFilterDropdownOptions()
     self:RebuildPlannerData()
@@ -638,31 +631,26 @@ function RP:RefreshPlanner()
     plannerFrame.vScroll:SetMinMaxValues(0, maxV)
     if plannerFrame.vScroll:GetValue() > maxV then plannerFrame.vScroll:SetValue(maxV) end
 
+    -- Horizontales Scrollen: Content-Breite aktualisieren und ScrollRange setzen
     local maxH = math.max(0, rightW - plannerFrame.rightW)
     plannerFrame.hScroll:SetMinMaxValues(0, maxH)
     if plannerFrame.hScroll:GetValue() > maxH then plannerFrame.hScroll:SetValue(maxH) end
-
-    -- Wochenlabel: zeigt an, in welcher Raidwoche (Index/Anzahl) man ist,
-    -- plus Datumsbereich Mi–Di dieser Woche.
-    local weeks = CollectNavigableWeekStarts()
-    local cur = NormalizeWeekStartTs(plannerFrame.weekStartTs)
-    local idx, total = 1, #weeks
-    if total > 0 then
-        for i, w in ipairs(weeks) do
-            if w == cur then
-                idx = i
-                break
-            end
-        end
+    
+    -- ScrollFrames explizit aktualisieren, damit horizontale ScrollRange erkannt wird
+    if plannerFrame.rightSF.UpdateScrollChildRect then
+        plannerFrame.rightSF:UpdateScrollChildRect()
     end
-    local startTs = cur
-    local endTs   = cur + 6 * 86400
-    plannerFrame.weekLabel:SetText(string.format(
-        "|cffffd100Raidwoche %d/%d|r  %s - %s",
-        idx, math.max(total, 1),
-        date("%d.%m.%Y", startTs),
-        date("%d.%m.%Y", endTs)
-    ))
+    if plannerFrame.rightHeaderSF.UpdateScrollChildRect then
+        plannerFrame.rightHeaderSF:UpdateScrollChildRect()
+    end
+    
+    -- Horizontalen Scrollbar nur anzeigen, wenn Scrollen notwendig ist
+    if maxH > 0 then
+        plannerFrame.hScroll:Show()
+    else
+        plannerFrame.hScroll:Hide()
+    end
+
 end
 
 function RP:OpenPlanner()
@@ -686,7 +674,8 @@ end
 function RP:EnsurePlannerFrame()
     if plannerFrame then return end
     plannerFrame = CreateFrame("Frame", "GASRPPlannerFrame", UIParent, "BackdropTemplate")
-    plannerFrame:SetSize(1180, 680)
+    -- Etwas breiter, damit Week-Buttons nicht mit dem Close-Button kollidieren
+    plannerFrame:SetSize(1300, 680)
     plannerFrame:SetPoint("CENTER")
     plannerFrame:SetFrameStrata("TOOLTIP")
     plannerFrame:SetFrameLevel(30)
@@ -696,7 +685,10 @@ function RP:EnsurePlannerFrame()
         tile = true, tileSize = 16, edgeSize = 16,
         insets = { left = 4, right = 4, top = 4, bottom = 4 },
     })
-    plannerFrame:SetBackdropColor(0.04, 0.04, 0.07, 0.97)
+    -- Gleicher, NICHT transparenter Hintergrund + Rahmen wie andere Fenster
+    plannerFrame:SetBackdropColor(0.04, 0.04, 0.07, 1.00)
+    plannerFrame:SetBackdropBorderColor(0.35, 0.40, 0.55, 1.00)
+    plannerFrame:EnableMouse(true) -- Klicks blockieren
     plannerFrame:SetMovable(true)
     plannerFrame:SetClampedToScreen(true)
     -- WICHTIG: Den gesamten Frame NICHT als Drag-Fläche benutzen, sonst
@@ -740,32 +732,48 @@ function RP:EnsurePlannerFrame()
     title:SetPoint("TOPLEFT", 6, -2)
     title:SetText("|cffffd100Raid Planer|r")
 
-    local prev = CreateFrame("Button", nil, topBar, "UIPanelButtonTemplate")
-    prev:SetSize(28, 22)
-    prev:SetPoint("TOPLEFT", 4, -28)
-    prev:SetText("<")
-    prev:SetFrameStrata("TOOLTIP")
-    prev:SetFrameLevel(baseLevel + 100) -- sehr hoch, damit Buttons immer sichtbar sind
-    plannerFrame.prevWeekBtn = prev
 
+    -- Wochen-Navigation (Mi→Di)
     plannerFrame.weekLabel = topBar:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-    plannerFrame.weekLabel:SetPoint("LEFT", prev, "RIGHT", 8, 0)
-    plannerFrame.weekLabel:SetWidth(460)
-    plannerFrame.weekLabel:SetJustifyH("LEFT")
-    if plannerFrame.weekLabel.SetWordWrap then
-        plannerFrame.weekLabel:SetWordWrap(false)
+    -- Position wird nach dem Next-Button gesetzt
+    plannerFrame.weekLabel:SetJustifyH("RIGHT")
+
+    local prevBtn = CreateFrame("Button", nil, topBar, "UIPanelButtonTemplate")
+    prevBtn:SetSize(26, 20)
+    prevBtn:SetText("<")
+    prevBtn:SetPoint("RIGHT", plannerFrame.weekLabel, "LEFT", -6, 0)
+    prevBtn:SetFrameLevel(topBar:GetFrameLevel() + 2)
+
+    local nextBtn = CreateFrame("Button", nil, topBar, "UIPanelButtonTemplate")
+    nextBtn:SetSize(26, 20)
+    nextBtn:SetText(">")
+    nextBtn:SetPoint("TOPRIGHT", -12, -4)
+    plannerFrame.weekLabel:SetPoint("RIGHT", nextBtn, "LEFT", -6, 0)
+    nextBtn:SetFrameLevel(topBar:GetFrameLevel() + 2)
+
+    function plannerFrame:UpdateWeekLabel()
+        local ws = NormalizeWeekStartTs(self.weekStartTs)
+        self.weekStartTs = ws
+        local fromTs, toTs = WeekRangeByStart(ws)
+        -- Anzeige: 04.03.2026 – 10.03.2026 (Mi–Di)
+        self.weekLabel:SetText(string.format("|cffcccccc%s – %s  (Mi–Di)|r", date("%d.%m.%Y", fromTs), date("%d.%m.%Y", toTs)))
     end
 
-    local nextB = CreateFrame("Button", nil, topBar, "UIPanelButtonTemplate")
-    nextB:SetSize(28, 22)
-    nextB:SetPoint("LEFT", plannerFrame.weekLabel, "RIGHT", 8, 0)
-    nextB:SetText(">")
-    nextB:SetFrameStrata("TOOLTIP")
-    nextB:SetFrameLevel(baseLevel + 100) -- sehr hoch, damit Buttons immer sichtbar sind
-    plannerFrame.nextWeekBtn = nextB
+    prevBtn:SetScript("OnClick", function()
+        plannerFrame.userNavigatedWeek = true
+        plannerFrame.weekStartTs = NormalizeWeekStartTs((plannerFrame.weekStartTs or CurrentWeekStart()) - 7 * 86400)
+        RP:RefreshPlanner()
+    end)
+    nextBtn:SetScript("OnClick", function()
+        plannerFrame.userNavigatedWeek = true
+        plannerFrame.weekStartTs = NormalizeWeekStartTs((plannerFrame.weekStartTs or CurrentWeekStart()) + 7 * 86400)
+        RP:RefreshPlanner()
+    end)
 
+
+    -- Raidfilter + Wochen-Navigation anzeigen
     local ddLabel = topBar:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
-    ddLabel:SetPoint("LEFT", nextB, "RIGHT", 10, 0)
+    ddLabel:SetPoint("TOPLEFT", 6, -30)
     ddLabel:SetText("Raidfilter:")
 
     plannerFrame.filterDD = CreateFrame("Frame", "GASRPPlannerFilterDD", topBar, "UIDropDownMenuTemplate")
@@ -775,7 +783,8 @@ function RP:EnsurePlannerFrame()
 
     local leftX, topY = 12, -74
     plannerFrame.leftW = ROLE_COL_W + NAME_COL_W
-    plannerFrame.rightW = 1180 - plannerFrame.leftW - 50
+    local totalW = plannerFrame:GetWidth() or 1240
+    plannerFrame.rightW = totalW - plannerFrame.leftW - 50
     plannerFrame.contentH = 680 - 120
 
     local leftHeader = CreateFrame("Frame", nil, plannerFrame, "BackdropTemplate")
@@ -796,14 +805,18 @@ function RP:EnsurePlannerFrame()
 
     plannerFrame.leftSF = CreateFrame("ScrollFrame", nil, plannerFrame)
     plannerFrame.leftSF:SetPoint("TOPLEFT", leftX, topY - HEADER_H - 2)
-    plannerFrame.leftSF:SetSize(plannerFrame.leftW, plannerFrame.contentH)
+    -- Gleiche Höhe wie rightSF, damit sie synchron bleiben
+    plannerFrame.leftSF:SetPoint("BOTTOMLEFT", plannerFrame, "BOTTOMLEFT", leftX, 36)
+    plannerFrame.leftSF:SetWidth(plannerFrame.leftW)
     plannerFrame.leftContent = CreateFrame("Frame", nil, plannerFrame.leftSF)
     plannerFrame.leftContent:SetSize(1, 1)
     plannerFrame.leftSF:SetScrollChild(plannerFrame.leftContent)
 
     plannerFrame.rightSF = CreateFrame("ScrollFrame", nil, plannerFrame)
     plannerFrame.rightSF:SetPoint("TOPLEFT", plannerFrame.leftSF, "TOPRIGHT", GAP, 0)
-    plannerFrame.rightSF:SetSize(plannerFrame.rightW, plannerFrame.contentH)
+    -- Platz für horizontale Scrollbar lassen (16px Höhe + 4px Abstand = 20px)
+    plannerFrame.rightSF:SetPoint("BOTTOMLEFT", plannerFrame, "BOTTOMLEFT", plannerFrame.leftW + GAP, 36)
+    plannerFrame.rightSF:SetWidth(plannerFrame.rightW)
     plannerFrame.rightContent = CreateFrame("Frame", nil, plannerFrame.rightSF)
     plannerFrame.rightContent:SetSize(1, 1)
     plannerFrame.rightSF:SetScrollChild(plannerFrame.rightContent)
@@ -826,8 +839,10 @@ function RP:EnsurePlannerFrame()
     end)
 
     plannerFrame.hScroll = CreateFrame("Slider", nil, plannerFrame, "UIPanelHorizontalScrollBarTemplate")
-    plannerFrame.hScroll:SetPoint("TOPLEFT", plannerFrame.rightSF, "BOTTOMLEFT", 16, -2)
-    plannerFrame.hScroll:SetPoint("TOPRIGHT", plannerFrame.rightSF, "BOTTOMRIGHT", -16, -2)
+    -- Scrollbar direkt über dem unteren Rand des Frames positionieren, damit sie sichtbar ist
+    plannerFrame.hScroll:SetPoint("BOTTOMLEFT", plannerFrame, "BOTTOMLEFT", plannerFrame.leftW + GAP + 16, 16)
+    plannerFrame.hScroll:SetPoint("BOTTOMRIGHT", plannerFrame, "BOTTOMRIGHT", -32, 16)
+    plannerFrame.hScroll:SetHeight(16)
     plannerFrame.hScroll:SetMinMaxValues(0, 0)
     plannerFrame.hScroll:SetValueStep(8)
     plannerFrame.hScroll:SetObeyStepOnDrag(true)
@@ -835,6 +850,7 @@ function RP:EnsurePlannerFrame()
         plannerFrame.rightSF:SetHorizontalScroll(value)
         plannerFrame.rightHeaderSF:SetHorizontalScroll(value)
     end)
+    plannerFrame.hScroll:Hide() -- Initial versteckt, wird in RefreshPlanner angezeigt wenn nötig
 
     -- Content-Frames bewusst unterhalb der TopBar anordnen, damit Navigation
     -- nie von ScrollFrames/Overlays ueberdeckt wird.
@@ -885,32 +901,6 @@ function RP:EnsurePlannerFrame()
     plannerFrame.noRaidsLabel:SetPoint("TOPLEFT", 12, -12)
     plannerFrame.noRaidsLabel:SetText("")
     plannerFrame.noRaidsLabel:Hide()
-
-    local function ChangeWeek(deltaWeeks)
-        plannerFrame.userNavigatedWeek = true
-        local base = plannerFrame.weekStartTs or CurrentWeekStart()
-        plannerFrame.weekStartTs = NormalizeWeekStartTs(base + (deltaWeeks * 7 * 86400))
-
-        -- Debug-Ausgabe, damit sichtbar ist, dass der Button ueberhaupt feuert
-        ADDON:Debug("Planner", "ChangeWeek deltaWeeks =", deltaWeeks, " -> weekStartTs =", date("%Y-%m-%d", plannerFrame.weekStartTs))
-        -- Beim Wochenwechsel Filter auf "Alle" setzen
-        plannerFrame.raidFilter = nil -- wird in RefreshPlannerFilterDropdownOptions passend gesetzt
-        -- Scrollpositionen zuruecksetzen
-        if plannerFrame.vScroll then plannerFrame.vScroll:SetValue(0) end
-        if plannerFrame.hScroll then plannerFrame.hScroll:SetValue(0) end
-        RP:RefreshPlanner()
-    end
-
-    -- Buttons explizit fuer Klicks registrieren (robust gegen Skins/Templates)
-    plannerFrame.prevWeekBtn:EnableMouse(true)
-    plannerFrame.prevWeekBtn:RegisterForClicks("AnyUp")
-    plannerFrame.prevWeekBtn:Enable()
-    plannerFrame.prevWeekBtn:SetScript("OnClick", function() ChangeWeek(-1) end)
-
-    plannerFrame.nextWeekBtn:EnableMouse(true)
-    plannerFrame.nextWeekBtn:RegisterForClicks("AnyUp")
-    plannerFrame.nextWeekBtn:Enable()
-    plannerFrame.nextWeekBtn:SetScript("OnClick", function() ChangeWeek(1) end)
 
     RefreshPlannerFilterDropdownOptions()
 

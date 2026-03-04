@@ -240,7 +240,9 @@ local function ProcessPermQueue()
     permSending = true
     local msg = table.remove(permSendQueue, 1)
     C_ChatInfo.SendAddonMessage(PERM_PREFIX, msg, "GUILD")
-    C_Timer.After(0.2, ProcessPermQueue)
+    -- Sehr konservativ: nur alle 0.5s eine Permission-Message,
+    -- da hier im Extremfall viele Spieler * Apps auftreten koennen.
+    C_Timer.After(0.5, ProcessPermQueue)
 end
 
 local function QueuePermMsg(msg)

@@ -16,6 +16,26 @@ THEME.spacing = {
     L = 16,
 }
 
+-- Layout-Tokens fuer alle Raidplaner-Fenster
+THEME.layout = {
+    padding      = 12,
+    gap          = 8,
+    sectionGap   = 12,
+    rowHeight    = 22,
+    headerHeight = 42,
+    footerHeight = 32,
+    minWidth     = 720,
+    minHeight    = 480,
+}
+
+-- Standard-Fonts (koennen spaeter pro Frame genutzt werden)
+THEME.fonts = {
+    normal  = "GameFontNormal",
+    small   = "GameFontNormalSmall",
+    header  = "GameFontNormalLarge",
+    muted   = "GameFontDisableSmall",
+}
+
 THEME.backdrops = {
     panel = {
         bgFile   = "Interface\\Tooltips\\UI-Tooltip-Background",
@@ -52,16 +72,16 @@ function THEME:ApplyTheme(frame, variant)
     if not frame or not frame.SetBackdrop then return end
     local bd = self.backdrops[variant or "panel"] or self.backdrops.panel
     frame:SetBackdrop(bd)
+    -- Einheitlicher, NICHT transparenter Hintergrund + dezenter Rahmen
+    local bgR, bgG, bgB, bgA = 0.04, 0.04, 0.07, 1.00
     if variant == "inset" then
-        frame:SetBackdropColor(0.05, 0.06, 0.10, 0.92)
-        frame:SetBackdropBorderColor(0.35, 0.42, 0.50, 0.85)
+        bgR, bgG, bgB, bgA = 0.05, 0.06, 0.10, 1.00
     elseif variant == "cell" then
-        frame:SetBackdropColor(0.08, 0.08, 0.12, 0.66)
-        frame:SetBackdropBorderColor(0.30, 0.30, 0.30, 0.30)
-    else
-        frame:SetBackdropColor(0.04, 0.05, 0.09, 0.96)
-        frame:SetBackdropBorderColor(0.50, 0.55, 0.65, 0.90)
+        bgR, bgG, bgB, bgA = 0.06, 0.06, 0.10, 1.00
     end
+    frame:SetBackdropColor(bgR, bgG, bgB, bgA)
+    -- Rahmenfarbe, die gut zum dunklen Hintergrund passt (dezent blaeulich)
+    frame:SetBackdropBorderColor(0.35, 0.40, 0.55, 1.00)
 end
 
 function THEME:CreatePanel(parent)

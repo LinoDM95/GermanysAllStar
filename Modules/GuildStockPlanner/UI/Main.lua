@@ -60,8 +60,9 @@ local eiPopup, eiEditBox, eiTitle, eiImportBtn
 
 local function ApplyBackdrop(frame, bd, r, g, b, a, er, eg, eb, ea)
     frame:SetBackdrop(bd)
-    frame:SetBackdropColor(r or 0.05, g or 0.05, b or 0.08, a or 0.95)
-    if er then frame:SetBackdropBorderColor(er, eg, eb, ea or 1) end
+    -- Einheitlicher, NICHT transparenter Hintergrund + dezenter Rahmen
+    frame:SetBackdropColor(0.04, 0.04, 0.07, 1.00)
+    frame:SetBackdropBorderColor(0.35, 0.40, 0.55, 1.00)
 end
 
 local function MakeMovable(frame)
@@ -439,6 +440,7 @@ function UI:CreateMainFrame()
     mainFrame:SetPoint("CENTER")
     mainFrame:SetFrameStrata("HIGH")
     ApplyBackdrop(mainFrame, BD_MAIN, 0.05, 0.05, 0.08, 0.96, 0.5, 0.5, 0.5)
+    mainFrame:EnableMouse(true) -- Klicks blockieren
     MakeMovable(mainFrame)
     mainFrame:Hide()
     tinsert(UISpecialFrames, "GSPMainFrame") -- ESC schliessen
@@ -1786,6 +1788,7 @@ function UI:CreateExportImportPopup()
     eiPopup:SetPoint("CENTER")
     eiPopup:SetFrameStrata("DIALOG")
     ApplyBackdrop(eiPopup, BD_MAIN, 0.05, 0.05, 0.08, 0.98, 0.5, 0.5, 0.5)
+    eiPopup:EnableMouse(true) -- Klicks blockieren
     MakeMovable(eiPopup)
     eiPopup:Hide()
     tinsert(UISpecialFrames, "GSPExportImportPopup")

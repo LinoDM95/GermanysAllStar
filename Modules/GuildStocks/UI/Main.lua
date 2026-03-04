@@ -47,8 +47,9 @@ local sectionCollapsed = { true, false } -- [1] Hauptitems (eingeklappt), [2] Ma
 
 local function ApplyBackdrop(frame, bd, r, g, b, a, er, eg, eb, ea)
     frame:SetBackdrop(bd)
-    frame:SetBackdropColor(r or 0.05, g or 0.05, b or 0.08, a or 0.95)
-    if er then frame:SetBackdropBorderColor(er, eg, eb, ea or 1) end
+    -- Einheitlicher, NICHT transparenter Hintergrund + dezenter Rahmen
+    frame:SetBackdropColor(0.04, 0.04, 0.07, 1.00)
+    frame:SetBackdropBorderColor(0.35, 0.40, 0.55, 1.00)
 end
 
 local function MakeMovable(frame)
@@ -349,6 +350,7 @@ function GS:Init()
     gsFrame:SetPoint("CENTER")
     gsFrame:SetFrameStrata("HIGH")
     ApplyBackdrop(gsFrame, BD_MAIN, 0.05, 0.05, 0.08, 0.96, 0.5, 0.5, 0.5)
+    gsFrame:EnableMouse(true) -- Klicks blockieren
     MakeMovable(gsFrame)
     gsFrame:Hide()
     tinsert(UISpecialFrames, "GASGuildStocksFrame")
