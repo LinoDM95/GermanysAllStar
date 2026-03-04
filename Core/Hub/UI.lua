@@ -8,6 +8,8 @@ local _, ADDON = ...
 
 ADDON.Hub = {}
 local Hub = ADDON.Hub
+local Theme = ADDON.Theme
+local DS = ADDON.DesignSystem
 
 ---------------------------------------------------------------------------
 -- Layout-Konstanten
@@ -53,8 +55,11 @@ local function MakeMovable(frame)
 end
 
 local function CreateLabel(parent, font, text, anchor, x, y)
-    local fs = parent:CreateFontString(nil, "OVERLAY", font)
-    fs:SetText(text)
+    local variant = "normal"
+    if font == "GameFontDisableSmall" then variant = "muted"
+    elseif font == "GameFontNormalSmall" or font == "GameFontHighlightSmall" then variant = "small"
+    elseif font == "GameFontNormalLarge" then variant = "header" end
+    local fs = DS.CreateLabel(parent, variant, text)
     if anchor then fs:SetPoint(anchor, x or 0, y or 0) end
     return fs
 end
@@ -62,21 +67,11 @@ end
 local function CreateBtn(parent, w, h, label, onClick)
     local btn = CreateFrame("Button", nil, parent, "BackdropTemplate")
     btn:SetSize(w, h)
-    btn:SetBackdrop({
-        bgFile   = "Interface\\Tooltips\\UI-Tooltip-Background",
-        edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
-        tile = true, tileSize = 16, edgeSize = 12,
-        insets = { left = 2, right = 2, top = 2, bottom = 2 },
-    })
-    btn:SetBackdropColor(0.15, 0.15, 0.22, 1)
-    btn:SetBackdropBorderColor(0.5, 0.5, 0.5, 1)
-    local hl = btn:CreateTexture(nil, "HIGHLIGHT")
-    hl:SetAllPoints()
-    hl:SetColorTexture(1, 1, 1, 0.08)
-    local txt = btn:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    local txt = btn:CreateFontString(nil, "OVERLAY", Theme.fonts.small)
     txt:SetPoint("CENTER")
     txt:SetText(label)
     btn.label = txt
+    DS.ApplyButtonStyle(btn)
     btn:SetScript("OnClick", onClick)
     return btn
 end
@@ -91,8 +86,7 @@ local function CreateAppCard(parent, index, data)
     local card = CreateFrame("Button", nil, parent, "BackdropTemplate")
     card:SetSize(HUB_W - 32, 84)
     card:SetPoint("TOPLEFT", 16, y)
-    card:SetBackdrop(BD_CARD)
-    card:SetBackdropColor(0.08, 0.08, 0.12, 0.92)
+    DS.ApplyPanelStyle(card)
     card:SetBackdropBorderColor(data.color[1], data.color[2], data.color[3], 0.6)
 
     -- Hover
@@ -193,9 +187,7 @@ local function CreatePermPanel()
     permFrame:SetSize(PERM_W, PERM_H)
     permFrame:SetPoint("CENTER", 240, 0)
     permFrame:SetFrameStrata("DIALOG")
-    permFrame:SetBackdrop(BD_MAIN)
-    permFrame:SetBackdropColor(0.04, 0.04, 0.07, 1.00)
-    permFrame:SetBackdropBorderColor(0.35, 0.40, 0.55, 1.00)
+    DS.ApplyWindowStyle(permFrame)
     permFrame:EnableMouse(true) -- Klicks blockieren
     MakeMovable(permFrame)
     permFrame:Hide()
@@ -556,9 +548,7 @@ function Hub:Init()
     hubFrame:SetSize(HUB_W, HUB_H)
     hubFrame:SetPoint("CENTER")
     hubFrame:SetFrameStrata("HIGH")
-    hubFrame:SetBackdrop(BD_MAIN)
-    hubFrame:SetBackdropColor(0.04, 0.04, 0.07, 1.00)
-    hubFrame:SetBackdropBorderColor(0.35, 0.40, 0.55, 1.00)
+    DS.ApplyWindowStyle(hubFrame)
     hubFrame:EnableMouse(true) -- Klicks blockieren
     MakeMovable(hubFrame)
     hubFrame:Hide()

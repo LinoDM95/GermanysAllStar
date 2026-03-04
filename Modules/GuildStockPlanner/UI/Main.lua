@@ -7,6 +7,8 @@ local _, ADDON = ...
 
 ADDON.UI = {}
 local UI = ADDON.UI
+local Theme = ADDON.Theme
+local DS = ADDON.DesignSystem
 
 ---------------------------------------------------------------------------
 -- Layout-Konstanten
@@ -59,10 +61,12 @@ local eiPopup, eiEditBox, eiTitle, eiImportBtn
 ---------------------------------------------------------------------------
 
 local function ApplyBackdrop(frame, bd, r, g, b, a, er, eg, eb, ea)
-    frame:SetBackdrop(bd)
-    -- Einheitlicher, NICHT transparenter Hintergrund + dezenter Rahmen
-    frame:SetBackdropColor(0.04, 0.04, 0.07, 1.00)
-    frame:SetBackdropBorderColor(0.35, 0.40, 0.55, 1.00)
+    if not frame then return end
+    if bd == BD_INSET then
+        DS.ApplyPanelStyle(frame)
+    else
+        DS.ApplyWindowStyle(frame)
+    end
 end
 
 local function MakeMovable(frame)
@@ -74,27 +78,38 @@ local function MakeMovable(frame)
 end
 
 local function CreateLabel(parent, fontObj, text, ...)
-    local fs = parent:CreateFontString(nil, "OVERLAY", fontObj or "GameFontNormal")
-    if text then fs:SetText(text) end
-    if select("#", ...) > 0 then fs:SetPoint(...) end
-    return fs
+    local variant = "normal"
+    if fontObj == "GameFontDisableSmall" then
+        variant = "muted"
+    elseif fontObj == "GameFontNormalSmall" or fontObj == "GameFontHighlightSmall" then
+        variant = "small"
+    elseif fontObj == "GameFontNormalLarge" then
+        variant = "header"
+    end
+    return DS.CreateLabel(parent, variant, text, ...)
 end
 
 local function CreateBtn(parent, w, h, text, onClick)
-    local btn = CreateFrame("Button", nil, parent, "UIPanelButtonTemplate")
+    local btn = CreateFrame("Button", nil, parent, "BackdropTemplate")
     btn:SetSize(w, h)
-    btn:SetText(text)
+    btn.text = btn:CreateFontString(nil, "OVERLAY", Theme.fonts.small)
+    btn.text:SetPoint("CENTER")
+    btn.text:SetText(text)
+    btn.SetText = function(self, value) self.text:SetText(value or "") end
+    btn.GetText = function(self) return self.text:GetText() end
+    DS.ApplyButtonStyle(btn)
     if onClick then btn:SetScript("OnClick", onClick) end
     return btn
 end
 
 local function CreateEB(parent, w, h, numeric)
-    local eb = CreateFrame("EditBox", nil, parent, "InputBoxTemplate")
+    local eb = CreateFrame("EditBox", nil, parent, "InputBoxTemplate,BackdropTemplate")
     eb:SetSize(w, h)
     eb:SetAutoFocus(false)
     if numeric then eb:SetNumeric(true) end
     eb:SetScript("OnEscapePressed", function(self) self:ClearFocus() end)
     eb:SetScript("OnEnterPressed", function(self) self:ClearFocus() end)
+    DS.ApplyInputStyle(eb)
     return eb
 end
 
@@ -104,6 +119,7 @@ local function CreateCB(parent, text, onClick)
     label:SetPoint("LEFT", cb, "RIGHT", 4, 0)
     label:SetText(text)
     cb.label = label
+    DS.ApplyCheckboxStyle(cb)
     if onClick then cb:SetScript("OnClick", onClick) end
     return cb
 end
