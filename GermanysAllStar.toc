@@ -6,33 +6,33 @@
 ## SavedVariables: GermanysAllStarDB GuildStockPlannerDB
 
 # ----------------------------------------------------
-# Core & Hub
+# Core
 # ----------------------------------------------------
-Core.lua
-HubUI.lua
+Core\Bootstrap.lua
+Core\Hub\UI.lua
 
 # ----------------------------------------------------
-# GuildStockPlanner (Gildenbank / Rezepte)
+# Modules/GuildStockPlanner (Gildenbank / Rezepte)
 # ----------------------------------------------------
-GuildStockPlanner\DB.lua
-GuildStockPlanner\Scanner.lua
-GuildStockPlanner\Calculator.lua
-GuildStockPlanner\ExportImport.lua
-GuildStockPlanner\Sync.lua
-GuildStockPlanner\UI.lua
+Modules\GuildStockPlanner\Data\DB.lua
+Modules\GuildStockPlanner\Services\Scanner.lua
+Modules\GuildStockPlanner\Services\Calculator.lua
+Modules\GuildStockPlanner\Services\ExportImport.lua
+Modules\GuildStockPlanner\Services\Sync.lua
+Modules\GuildStockPlanner\UI\Main.lua
 
 # ----------------------------------------------------
-# Raidplaner (Kalender, Raids, Roster)
+# Modules/Raidplaner (Kalender, Raids, Roster)
 # ----------------------------------------------------
-Raidplaner\RaidData.lua
-Raidplaner\DB.lua
-Raidplaner\Sync.lua
-Raidplaner\UITheme.lua
-Raidplaner\UI.lua
-Raidplaner\Planner.lua
-Raidplaner\State.lua
+Modules\Raidplaner\Data\RaidData.lua
+Modules\Raidplaner\Data\DB.lua
+Modules\Raidplaner\Services\Sync.lua
+Modules\Raidplaner\UI\Theme.lua
+Modules\Raidplaner\UI\Main.lua
+Modules\Raidplaner\Services\Planner.lua
+Modules\Raidplaner\Services\State.lua
 
 # ----------------------------------------------------
-# GuildStocks (Bestands-UI, optional)
+# Modules/GuildStocks (Bestands-UI, optional)
 # ----------------------------------------------------
-GuildStocks\UI.lua
+Modules\GuildStocks\UI\Main.lua

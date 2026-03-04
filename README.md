@@ -77,31 +77,44 @@ Im Tab "Sync-Log" siehst du wer wann was hinzugefuegt, geloescht oder synchronis
 GermanysAllStar/
   GermanysAllStar.toc         (Lade-Reihenfolge, SavedVariables)
 
-  Core.lua                    (Addon-Namespace, Utilities, Hub-DB, Permissions)
-  HubUI.lua                   (Hub-Launcher, Rechteverwaltung, App-Auswahl)
+  Core/
+    Bootstrap.lua             (Addon-Namespace, Utilities, Hub-DB, Permissions)
+    Hub/
+      UI.lua                  (Hub-Launcher, Rechteverwaltung, App-Auswahl)
 
   Textures/
     logo.tga                  (Gildenwappen 512x512, Wasserzeichen fuer UIs)
 
-  GuildStockPlanner/          (Modul: Gildenbank-Planer)
-    DB.lua                    (Datenmodell, Persistenz, Sync-Log)
-    Scanner.lua               (Gildenbank-Scan)
-    Calculator.lua            (Berechnung fehlender Materialien)
-    ExportImport.lua          (String Export/Import Backup)
-    Sync.lua                  (Guild-Channel Rezept-Sync)
-    UI.lua                    (GuildStockPlanner UI, Tabs, How-To)
+  Modules/
+    GuildStockPlanner/        (Modul: Gildenbank-Planer)
+      README.md
+      Data/
+        DB.lua                (Datenmodell, Persistenz, Sync-Log)
+      Services/
+        Scanner.lua           (Gildenbank-Scan)
+        Calculator.lua        (Berechnung fehlender Materialien)
+        ExportImport.lua      (String Export/Import Backup)
+        Sync.lua              (Guild-Channel Rezept-Sync)
+      UI/
+        Main.lua              (GuildStockPlanner UI, Tabs, How-To)
 
-  Raidplaner/                 (Modul: Raid-Kalender & Roster)
-    RaidData.lua              (Statischer Datensatz: Raids, Specs, Rollen)
-    DB.lua                    (Datenmodell, Persistenz, Tombstones, Raid-Logs)
-    Sync.lua                  (Gildenweiter Raid-/Signup-Sync)
-    UITheme.lua               (Theme-Hooks fuer Backdrops/Labels)
-    UI.lua                    (Kalender, Detailfenster, Signup, Roster, Logs)
-    Planner.lua               (Wochen-Planer-Ansicht fuer Raidleads)
-    State.lua                 (Hilfsfunktionen fuer Raid-Status, UI-Refresh)
+    Raidplaner/               (Modul: Raid-Kalender & Roster)
+      README.md
+      Data/
+        RaidData.lua          (Statischer Datensatz: Raids, Specs, Rollen)
+        DB.lua                (Datenmodell, Persistenz, Tombstones, Raid-Logs)
+      Services/
+        Sync.lua              (Gildenweiter Raid-/Signup-Sync)
+        Planner.lua           (Wochen-Planer-Ansicht fuer Raidleads)
+        State.lua             (Hilfsfunktionen fuer Raid-Status, UI-Refresh)
+      UI/
+        Theme.lua             (Theme-Hooks fuer Backdrops/Labels)
+        Main.lua              (Kalender, Detailfenster, Signup, Roster, Logs)
 
-  GuildStocks/                (Modul: Gildenbestands-Viewer)
-    UI.lua                    (Anzeige aller Gildenbank-Bestände)
+    GuildStocks/              (Modul: Gildenbestands-Viewer)
+      README.md
+      UI/
+        Main.lua              (Anzeige aller Gildenbank-Bestände)
 ```
 
 ## Lizenz
