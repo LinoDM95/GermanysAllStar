@@ -10,6 +10,8 @@ local _, ADDON = ...
 ADDON.Raidplaner = ADDON.Raidplaner or {}
 local RP = ADDON.Raidplaner
 local THEME = ADDON.UITheme
+local Theme = ADDON.Theme
+local DS = ADDON.DesignSystem
 
 ---------------------------------------------------------------------------
 -- Layout-Konstanten
@@ -93,31 +95,32 @@ local function MakeMovable(frame)
 end
 
 local function CreateLabel(parent, fontObj, text, ...)
-    local fs
-    if THEME and THEME.CreateLabelGold then
-        fs = THEME:CreateLabelGold(parent, fontObj, text, ...)
-    else
-        fs = parent:CreateFontString(nil, "OVERLAY", fontObj or "GameFontNormal")
-        if text then fs:SetText(text) end
-        if select("#", ...) > 0 then fs:SetPoint(...) end
-    end
-    return fs
+    local variant = "normal"
+    if fontObj == "GameFontDisableSmall" then variant = "muted"
+    elseif fontObj == "GameFontNormalSmall" or fontObj == "GameFontHighlightSmall" then variant = "small"
+    elseif fontObj == "GameFontNormalLarge" then variant = "header" end
+    return DS.CreateLabel(parent, variant, text, ...)
 end
 
 local function CreateBtn(parent, w, h, text, onClick)
-    local btn = CreateFrame("Button", nil, parent, "UIPanelButtonTemplate")
+    local btn = CreateFrame("Button", nil, parent, "BackdropTemplate")
     btn:SetSize(w, h)
-    btn:SetText(text)
+    btn._txt = btn:CreateFontString(nil, "OVERLAY", Theme.fonts.small)
+    btn._txt:SetPoint("CENTER")
+    btn._txt:SetText(text)
+    btn.SetText = function(self, value) self._txt:SetText(value or "") end
+    DS.ApplyButtonStyle(btn)
     if onClick then btn:SetScript("OnClick", onClick) end
     return btn
 end
 
 local function CreateEB(parent, w, h)
-    local eb = CreateFrame("EditBox", nil, parent, "InputBoxTemplate")
+    local eb = CreateFrame("EditBox", nil, parent, "InputBoxTemplate,BackdropTemplate")
     eb:SetSize(w, h)
     eb:SetAutoFocus(false)
     eb:SetScript("OnEscapePressed", function(s) s:ClearFocus() end)
     eb:SetScript("OnEnterPressed",  function(s) s:ClearFocus() end)
+    DS.ApplyInputStyle(eb)
     return eb
 end
 

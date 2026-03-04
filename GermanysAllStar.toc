@@ -12,6 +12,13 @@ Core\Bootstrap.lua
 Core\Hub\UI.lua
 
 # ----------------------------------------------------
+# Shared UI Design System
+# ----------------------------------------------------
+UI\Theme.lua
+UI\DesignSystem.lua
+UI\Factory.lua
+
+# ----------------------------------------------------
 # Modules/GuildStockPlanner (Gildenbank / Rezepte)
 # ----------------------------------------------------
 Modules\GuildStockPlanner\Data\DB.lua
