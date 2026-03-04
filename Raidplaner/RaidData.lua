@@ -15,6 +15,7 @@ RD.raids = {
     { key = "ZULAMAN",     name = "Zul'Aman",              size = 10, short = "ZA"    },
     { key = "GRUUL",       name = "Gruul's Lair",          size = 25, short = "Gruul" },
     { key = "MAGTHERIDON", name = "Magtheridon's Lair",    size = 25, short = "Maggy" },
+    { key = "GRUUL_MAGGY", name = "Gruul + Magtheridon",   size = 25, short = "Gruul+Maggy" },
     { key = "SSC",         name = "Serpentshrine Cavern",   size = 25, short = "SSC"   },
     { key = "TK",          name = "Tempest Keep",           size = 25, short = "TK"    },
     { key = "HYJAL",       name = "Hyjal Summit",          size = 25, short = "Hyjal" },

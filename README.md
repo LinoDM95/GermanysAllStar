@@ -71,22 +71,37 @@ Automatische stille Synchronisation ueber den GUILD Addon-Channel:
 
 Im Tab "Sync-Log" siehst du wer wann was hinzugefuegt, geloescht oder synchronisiert hat.
 
-## Dateistruktur
+## Dateistruktur (Projekt-Overview)
 
 ```
 GermanysAllStar/
-  GermanysAllStar.toc
-  Core.lua                    (Namespace, Helpers, Hub-DB, Permissions, Sync)
-  HubUI.lua                   (Hub-Launcher, Rechteverwaltung)
+  GermanysAllStar.toc         (Lade-Reihenfolge, SavedVariables)
+
+  Core.lua                    (Addon-Namespace, Utilities, Hub-DB, Permissions)
+  HubUI.lua                   (Hub-Launcher, Rechteverwaltung, App-Auswahl)
+
   Textures/
-    logo.tga                  (Gildenwappen 512x512)
-  GuildStockPlanner/
-    DB.lua                    (Datenmodell, Persistenz)
+    logo.tga                  (Gildenwappen 512x512, Wasserzeichen fuer UIs)
+
+  GuildStockPlanner/          (Modul: Gildenbank-Planer)
+    DB.lua                    (Datenmodell, Persistenz, Sync-Log)
     Scanner.lua               (Gildenbank-Scan)
-    Calculator.lua            (Berechnung fehlender Mats)
+    Calculator.lua            (Berechnung fehlender Materialien)
     ExportImport.lua          (String Export/Import Backup)
     Sync.lua                  (Guild-Channel Rezept-Sync)
-    UI.lua                    (GuildStockPlanner UI)
+    UI.lua                    (GuildStockPlanner UI, Tabs, How-To)
+
+  Raidplaner/                 (Modul: Raid-Kalender & Roster)
+    RaidData.lua              (Statischer Datensatz: Raids, Specs, Rollen)
+    DB.lua                    (Datenmodell, Persistenz, Tombstones, Raid-Logs)
+    Sync.lua                  (Gildenweiter Raid-/Signup-Sync)
+    UITheme.lua               (Theme-Hooks fuer Backdrops/Labels)
+    UI.lua                    (Kalender, Detailfenster, Signup, Roster, Logs)
+    Planner.lua               (Wochen-Planer-Ansicht fuer Raidleads)
+    State.lua                 (Hilfsfunktionen fuer Raid-Status, UI-Refresh)
+
+  GuildStocks/                (Modul: Gildenbestands-Viewer)
+    UI.lua                    (Anzeige aller Gildenbank-Bestände)
 ```
 
 ## Lizenz

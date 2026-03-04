@@ -44,14 +44,21 @@ local function CurrentWeekStart()
 end
 
 local function CollectNavigableWeekStarts()
-    local currentWeek = CurrentWeekStart()
-    local startsByTs = { [currentWeek] = true }
-
-    for _, raid in pairs(ADDON.RaidplanerDB:GetRaids()) do
+    -- Sammle alle Wochen, in denen Raids liegen (Vergangenheit + Zukunft)
+    local startsByTs = {}
+    for _, raid in pairs(ADDON.RaidplanerDB:GetRaids() or {}) do
         local weekStart = WeekStartFromDate(raid.date)
-        if weekStart and weekStart >= currentWeek then
+        if weekStart then
             startsByTs[weekStart] = true
         end
+    end
+
+    -- Optional: einige Wochen rund um die aktuelle Woche einfuegen,
+    -- damit das "Raidwoche X/Y"-Label nicht nur echte Raid-Wochen kennt.
+    local currentWeek = CurrentWeekStart()
+    for i = -6, 12 do
+        local ws = currentWeek + i * 7 * 86400
+        startsByTs[ws] = true
     end
 
     local starts = {}
@@ -62,11 +69,14 @@ local function CollectNavigableWeekStarts()
     return starts
 end
 
-local function ClampWeekStart(weekStartTs)
-    if not weekStartTs then
+-- Normiert einen Timestamp auf den Mittwoch derselben Kalenderwoche.
+local function NormalizeWeekStartTs(ts)
+    if not ts then
         return CurrentWeekStart()
     end
-    return weekStartTs
+    local w = tonumber(date("%w", ts)) or 0 -- 0=So, 3=Mi
+    local offset = (w - 3) % 7
+    return ts - offset * 86400
 end
 
 local function FormatHeadDate(dateStr)
@@ -144,7 +154,7 @@ local function DetermineInitialWeekStart()
     end
 
     if bestFuture then return WeekStartFromDate(date("%Y-%m-%d", bestFuture)) end
-    if bestPast then return ClampWeekStart(WeekStartFromDate(date("%Y-%m-%d", bestPast))) end
+    if bestPast then return NormalizeWeekStartTs(WeekStartFromDate(date("%Y-%m-%d", bestPast))) end
     return fallback
 end
 
@@ -179,8 +189,8 @@ local function RefreshPlannerFilterDropdownOptions()
     if not plannerFrame or not plannerFrame.filterDD then return end
 
     plannerFrame.filterOptions = CollectRaidFilterOptionsForWeek(plannerFrame.weekStartTs)
-    local hasCurrentFilter = (plannerFrame.raidFilter == "ALL")
-    if not hasCurrentFilter then
+    local hasCurrentFilter = false
+    if plannerFrame.raidFilter then
         for _, opt in ipairs(plannerFrame.filterOptions) do
             if opt.key == plannerFrame.raidFilter then
                 hasCurrentFilter = true
@@ -188,8 +198,14 @@ local function RefreshPlannerFilterDropdownOptions()
             end
         end
     end
+    -- Wenn aktueller Filter nicht (mehr) existiert, standardmaessig ersten Raid
+    -- dieser Woche verwenden (falls vorhanden).
     if not hasCurrentFilter then
-        plannerFrame.raidFilter = "ALL"
+        if #plannerFrame.filterOptions > 0 then
+            plannerFrame.raidFilter = plannerFrame.filterOptions[1].key
+        else
+            plannerFrame.raidFilter = nil
+        end
     end
 
     UIDropDownMenu_Initialize(plannerFrame.filterDD, function(_, level)
@@ -204,15 +220,13 @@ local function RefreshPlannerFilterDropdownOptions()
             end
             UIDropDownMenu_AddButton(info, level)
         end
-
-        Add("Alle (Woche)", "ALL")
         for _, opt in ipairs(plannerFrame.filterOptions) do
             Add(opt.text, opt.key)
         end
     end)
 
-    local label = "Alle (Woche)"
-    if plannerFrame.raidFilter ~= "ALL" then
+    local label = ""
+    if plannerFrame.raidFilter then
         for _, opt in ipairs(plannerFrame.filterOptions) do
             if opt.key == plannerFrame.raidFilter then
                 label = opt.text
@@ -418,10 +432,27 @@ function RP:RefreshPlanner()
     if ADDON.UITheme and ADDON.UITheme.RaiseGlobalDropdowns then
         ADDON.UITheme:RaiseGlobalDropdowns(32)
     end
+    plannerFrame.weekStartTs = NormalizeWeekStartTs(plannerFrame.weekStartTs)
+    ADDON:Debug("Planner", "RefreshPlanner start, weekStartTs =", date("%Y-%m-%d", plannerFrame.weekStartTs))
+
+    -- WeekLabel frueh setzen, damit es sichtbar bleibt, selbst wenn spaeter
+    -- im Aufbau ein Fehler auftreten sollte.
+    do
+        local startTs = plannerFrame.weekStartTs or CurrentWeekStart()
+        local endTs   = startTs + 6 * 86400
+        if plannerFrame.weekLabel then
+            plannerFrame.weekLabel:SetText(string.format(
+                "|cffffd100Raidwoche|r  %s - %s",
+                date("%d.%m.%Y", startTs),
+                date("%d.%m.%Y", endTs)
+            ))
+        end
+    end
+
     RefreshPlannerFilterDropdownOptions()
-    plannerFrame.weekStartTs = ClampWeekStart(plannerFrame.weekStartTs)
     self:RebuildPlannerData()
     local pd = plannerFrame.planData or { rows = {}, columns = {}, playersByName = {} }
+    ADDON:Debug("Planner", "RebuildPlannerData: raids =", #(pd.columns or {}), "rows =", #(pd.rows or {}))
 
     for _, h in ipairs(pHeaders) do h:Hide() end
     for _, r in ipairs(pRows) do r:Hide() end
@@ -433,6 +464,16 @@ function RP:RefreshPlanner()
     plannerFrame.rightHeaderChild:SetSize(rightW, HEADER_H)
     plannerFrame.rightContent:SetSize(rightW, math.max(1, #pd.rows * ROW_H))
     plannerFrame.leftContent:SetSize(leftW, math.max(1, #pd.rows * ROW_H))
+
+    -- Hinweis, falls in dieser Woche keine Raids existieren
+    if plannerFrame.noRaidsLabel then
+        if #pd.columns == 0 then
+            plannerFrame.noRaidsLabel:SetText("|cffaaaaaaKeine Raids in dieser Woche.|r")
+            plannerFrame.noRaidsLabel:Show()
+        else
+            plannerFrame.noRaidsLabel:Hide()
+        end
+    end
 
     for i, raid in ipairs(pd.columns) do
         local h = pHeaders[i]
@@ -467,16 +508,14 @@ function RP:RefreshPlanner()
             row.text:SetPoint("LEFT", 6, 0)
             row.text:SetWidth(leftW - 12)
             row.text:SetJustifyH("LEFT")
+            -- Dezentes Hover nur über die Zeile selbst, ohne kompletten Rebuild
             row:SetScript("OnEnter", function(self)
                 if self.isSection or not self.playerName then return end
-                plannerFrame.hoveredPlayerName = self.playerName
-                RP:RefreshPlanner()
+                self:SetBackdropColor(0.25, 0.20, 0.05, 0.55)
             end)
             row:SetScript("OnLeave", function(self)
-                if plannerFrame.hoveredPlayerName == self.playerName then
-                    plannerFrame.hoveredPlayerName = nil
-                    RP:RefreshPlanner()
-                end
+                if self.isSection or not self.playerName then return end
+                self:SetBackdropColor(0, 0, 0, 0.20)
             end)
             pRows[rowIdx] = row
         end
@@ -504,12 +543,7 @@ function RP:RefreshPlanner()
                 row.text:SetText("")
             else
                 row.playerName = rowData.name
-                local hovered = plannerFrame.hoveredPlayerName == rowData.name
-                if hovered then
-                    row:SetBackdropColor(0.25, 0.20, 0.05, 0.55)
-                else
-                    row:SetBackdropColor(0, 0, 0, 0.20)
-                end
+                row:SetBackdropColor(0, 0, 0, 0.20)
                 if rowData.classColor then
                     local cr, cg, cb = rowData.classColor.r * 255, rowData.classColor.g * 255, rowData.classColor.b * 255
                     row.text:SetText(string.format("|cff%02x%02x%02x%s|r", cr, cg, cb, rowData.name))
@@ -525,18 +559,6 @@ function RP:RefreshPlanner()
             local cell = pCells[idx]
             if not cell then
                 cell = MakeCell(plannerFrame.rightContent)
-                cell:SetScript("OnEnter", function(self)
-                    if self.rowName then
-                        plannerFrame.hoveredPlayerName = self.rowName
-                        RP:RefreshPlanner()
-                    end
-                end)
-                cell:SetScript("OnLeave", function(self)
-                    if self.rowName and plannerFrame.hoveredPlayerName == self.rowName then
-                        plannerFrame.hoveredPlayerName = nil
-                        RP:RefreshPlanner()
-                    end
-                end)
                 cell:SetScript("OnMouseUp", function(self)
                     if not RP:CanManageRaids() then return end
                     if not self.canAssign or not self.rowName then return end
@@ -572,19 +594,13 @@ function RP:RefreshPlanner()
                 if rowData.rosterSlot then
                     local plannedList = (((pd.plannedByRaidRole or {})[raid.id] or {})[rowData.roleKey]) or {}
                     local entry = plannedList[rowData.slotIndex]
-                    local isHoveredEntry = entry and (plannerFrame.hoveredPlayerName == entry.name)
                     cell.canAssign = entry ~= nil
                     cell.rowName = entry and entry.name or nil
                     if entry then
                         local classCode = GetClassColorCode(entry.class, "ffffffff")
                         cell.label:SetText("|c" .. classCode .. entry.name .. "|r")
-                        if isHoveredEntry then
-                            cell:SetBackdropColor(0.08, 0.16, 0.22, 0.62)
-                            cell:SetBackdropBorderColor(0.50, 0.85, 1.0, 0.85)
-                        else
-                            cell:SetBackdropColor(0.10, 0.10, 0.14, 0.55)
-                            cell:SetBackdropBorderColor(0.35, 0.35, 0.45, 0.5)
-                        end
+                        cell:SetBackdropColor(0.10, 0.10, 0.14, 0.55)
+                        cell:SetBackdropBorderColor(0.35, 0.35, 0.45, 0.5)
                     else
                         cell.label:SetText("")
                         cell.rowName = nil
@@ -593,7 +609,6 @@ function RP:RefreshPlanner()
                     end
                 else
                     local s = raid.signups and raid.signups[rowData.name]
-                    local isHoveredRow = plannerFrame.hoveredPlayerName == rowData.name
                     local isPlanned = s and IsSignupPlanned(s)
                     cell.canAssign = s ~= nil
 
@@ -611,13 +626,8 @@ function RP:RefreshPlanner()
                     end
                     cell.label:SetText(txt)
 
-                    if cell.canAssign and isHoveredRow then
-                        cell:SetBackdropColor(0.16, 0.15, 0.05, 0.52)
-                        cell:SetBackdropBorderColor(0.95, 0.85, 0.2, 0.8)
-                    else
-                        cell:SetBackdropColor(0.08, 0.08, 0.12, 0.5)
-                        cell:SetBackdropBorderColor(0.3, 0.3, 0.3, 0.35)
-                    end
+                    cell:SetBackdropColor(0.08, 0.08, 0.12, 0.5)
+                    cell:SetBackdropBorderColor(0.3, 0.3, 0.3, 0.35)
                 end
                 cell:Show()
             end
@@ -632,10 +642,27 @@ function RP:RefreshPlanner()
     plannerFrame.hScroll:SetMinMaxValues(0, maxH)
     if plannerFrame.hScroll:GetValue() > maxH then plannerFrame.hScroll:SetValue(maxH) end
 
-    plannerFrame.weekLabel:SetText("|cffffd100Mi-Di:|r " .. date("%d.%m.%Y", plannerFrame.weekStartTs) .. " - " .. date("%d.%m.%Y", plannerFrame.weekStartTs + 6 * 86400))
-    if plannerFrame.weekJumpEB then
-        plannerFrame.weekJumpEB:SetText(date("%Y-%m-%d", plannerFrame.weekStartTs))
+    -- Wochenlabel: zeigt an, in welcher Raidwoche (Index/Anzahl) man ist,
+    -- plus Datumsbereich Mi–Di dieser Woche.
+    local weeks = CollectNavigableWeekStarts()
+    local cur = NormalizeWeekStartTs(plannerFrame.weekStartTs)
+    local idx, total = 1, #weeks
+    if total > 0 then
+        for i, w in ipairs(weeks) do
+            if w == cur then
+                idx = i
+                break
+            end
+        end
     end
+    local startTs = cur
+    local endTs   = cur + 6 * 86400
+    plannerFrame.weekLabel:SetText(string.format(
+        "|cffffd100Raidwoche %d/%d|r  %s - %s",
+        idx, math.max(total, 1),
+        date("%d.%m.%Y", startTs),
+        date("%d.%m.%Y", endTs)
+    ))
 end
 
 function RP:OpenPlanner()
@@ -643,10 +670,15 @@ function RP:OpenPlanner()
         ADDON:Print("Nur GM/Raidlead darf den Planer nutzen.")
         return
     end
-    if not plannerFrame then self:EnsurePlannerFrame() end
+    if not plannerFrame then
+        ADDON:Debug("Planner", "EnsurePlannerFrame() wird aufgerufen")
+        self:EnsurePlannerFrame()
+    end
     if plannerFrame and not plannerFrame.userNavigatedWeek then
         plannerFrame.weekStartTs = DetermineInitialWeekStart()
+        ADDON:Debug("Planner", "Initiale Woche gesetzt auf", date("%Y-%m-%d", plannerFrame.weekStartTs))
     end
+    ADDON:Debug("Planner", "OpenPlanner: weekStartTs =", plannerFrame.weekStartTs and date("%Y-%m-%d", plannerFrame.weekStartTs) or "nil")
     plannerFrame:Show()
     self:RefreshPlanner()
 end
@@ -666,75 +698,79 @@ function RP:EnsurePlannerFrame()
     })
     plannerFrame:SetBackdropColor(0.04, 0.04, 0.07, 0.97)
     plannerFrame:SetMovable(true)
-    plannerFrame:EnableMouse(true)
-    plannerFrame:RegisterForDrag("LeftButton")
-    plannerFrame:SetScript("OnDragStart", plannerFrame.StartMoving)
-    plannerFrame:SetScript("OnDragStop", plannerFrame.StopMovingOrSizing)
+    plannerFrame:SetClampedToScreen(true)
+    -- WICHTIG: Den gesamten Frame NICHT als Drag-Fläche benutzen, sonst
+    -- fangen Drag-Handler oft Klicks ab. Drag läuft nur über eine TitleBar.
+    plannerFrame:RegisterForDrag()          -- alle Drag-Buttons löschen
+    plannerFrame:SetScript("OnDragStart", nil)
+    plannerFrame:SetScript("OnDragStop",  nil)
     plannerFrame:Hide()
     tinsert(UISpecialFrames, "GASRPPlannerFrame")
-
-    local title = plannerFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
-    title:SetPoint("TOPLEFT", 14, -12)
-    title:SetText("|cffffd100Raid Planer|r")
 
     local close = CreateFrame("Button", nil, plannerFrame, "UIPanelCloseButton")
     close:SetPoint("TOPRIGHT", -2, -2)
 
-    local prev = CreateFrame("Button", nil, plannerFrame, "UIPanelButtonTemplate")
+    -----------------------------------------------------------------------
+    -- DRAG-BAR – kleine TitleBar zum Bewegen des Fensters
+    -----------------------------------------------------------------------
+    local dragBar = CreateFrame("Frame", nil, plannerFrame)
+    dragBar:SetPoint("TOPLEFT", 4, -4)
+    dragBar:SetPoint("TOPRIGHT", -4, -4)
+    dragBar:SetHeight(28)
+    dragBar:EnableMouse(true)
+    dragBar:RegisterForDrag("LeftButton")
+    dragBar:SetScript("OnDragStart", function() plannerFrame:StartMoving() end)
+    dragBar:SetScript("OnDragStop",  function() plannerFrame:StopMovingOrSizing() end)
+    plannerFrame.dragBar = dragBar
+
+    -----------------------------------------------------------------------
+    -- TOP BAR – Titel, Wochen-Navigation, Raidfilter (immer über allem)
+    -----------------------------------------------------------------------
+    local baseLevel = plannerFrame:GetFrameLevel() or 30
+
+    local topBar = CreateFrame("Frame", nil, plannerFrame)
+    topBar:SetPoint("TOPLEFT", 8, -8)
+    topBar:SetPoint("TOPRIGHT", -8, -8)
+    topBar:SetHeight(60)
+    topBar:SetFrameStrata(plannerFrame:GetFrameStrata())
+    topBar:SetFrameLevel(baseLevel + 80) -- sehr hoch über allen Content-Frames
+    plannerFrame.topBar = topBar
+
+    local title = topBar:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+    title:SetPoint("TOPLEFT", 6, -2)
+    title:SetText("|cffffd100Raid Planer|r")
+
+    local prev = CreateFrame("Button", nil, topBar, "UIPanelButtonTemplate")
     prev:SetSize(28, 22)
-    prev:SetPoint("TOPLEFT", 12, -42)
+    prev:SetPoint("TOPLEFT", 4, -28)
     prev:SetText("<")
+    prev:SetFrameStrata("TOOLTIP")
+    prev:SetFrameLevel(baseLevel + 100) -- sehr hoch, damit Buttons immer sichtbar sind
     plannerFrame.prevWeekBtn = prev
 
-    plannerFrame.weekLabel = plannerFrame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    plannerFrame.weekLabel = topBar:CreateFontString(nil, "OVERLAY", "GameFontNormal")
     plannerFrame.weekLabel:SetPoint("LEFT", prev, "RIGHT", 8, 0)
-    plannerFrame.weekLabel:SetWidth(260)
+    plannerFrame.weekLabel:SetWidth(460)
     plannerFrame.weekLabel:SetJustifyH("LEFT")
+    if plannerFrame.weekLabel.SetWordWrap then
+        plannerFrame.weekLabel:SetWordWrap(false)
+    end
 
-    local nextB = CreateFrame("Button", nil, plannerFrame, "UIPanelButtonTemplate")
+    local nextB = CreateFrame("Button", nil, topBar, "UIPanelButtonTemplate")
     nextB:SetSize(28, 22)
     nextB:SetPoint("LEFT", plannerFrame.weekLabel, "RIGHT", 8, 0)
     nextB:SetText(">")
+    nextB:SetFrameStrata("TOOLTIP")
+    nextB:SetFrameLevel(baseLevel + 100) -- sehr hoch, damit Buttons immer sichtbar sind
     plannerFrame.nextWeekBtn = nextB
 
-    local ddLabel = plannerFrame:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+    local ddLabel = topBar:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
     ddLabel:SetPoint("LEFT", nextB, "RIGHT", 10, 0)
     ddLabel:SetText("Raidfilter:")
 
-    plannerFrame.weekJumpEB = CreateFrame("EditBox", nil, plannerFrame, "InputBoxTemplate")
-    plannerFrame.weekJumpEB:SetSize(96, 20)
-    plannerFrame.weekJumpEB:SetPoint("LEFT", ddLabel, "RIGHT", 76, 0)
-    plannerFrame.weekJumpEB:SetAutoFocus(false)
-    plannerFrame.weekJumpEB:SetScript("OnEscapePressed", function(self) self:ClearFocus() end)
-    plannerFrame.weekJumpEB:SetScript("OnEnterPressed", function(self)
-        self:ClearFocus()
-        local weekStart = WeekStartFromDate(strtrim(self:GetText() or ""))
-        if not weekStart then
-            ADDON:Print("Datum bitte als YYYY-MM-DD eingeben.")
-            return
-        end
-        plannerFrame.userNavigatedWeek = true
-        plannerFrame.weekStartTs = weekStart
-        RP:RefreshPlanner()
-    end)
-
-    local jumpBtn = CreateFrame("Button", nil, plannerFrame, "UIPanelButtonTemplate")
-    jumpBtn:SetSize(54, 22)
-    jumpBtn:SetPoint("LEFT", plannerFrame.weekJumpEB, "RIGHT", 6, 0)
-    jumpBtn:SetText("Go")
-    jumpBtn:SetScript("OnClick", function()
-        local weekStart = WeekStartFromDate(strtrim(plannerFrame.weekJumpEB:GetText() or ""))
-        if not weekStart then
-            ADDON:Print("Datum bitte als YYYY-MM-DD eingeben.")
-            return
-        end
-        plannerFrame.userNavigatedWeek = true
-        plannerFrame.weekStartTs = weekStart
-        RP:RefreshPlanner()
-    end)
-
-    plannerFrame.filterDD = CreateFrame("Frame", "GASRPPlannerFilterDD", plannerFrame, "UIDropDownMenuTemplate")
-    plannerFrame.filterDD:SetPoint("LEFT", jumpBtn, "RIGHT", -8, -2)
+    plannerFrame.filterDD = CreateFrame("Frame", "GASRPPlannerFilterDD", topBar, "UIDropDownMenuTemplate")
+    plannerFrame.filterDD:SetPoint("LEFT", ddLabel, "RIGHT", 8, -2)
+    plannerFrame.filterDD:SetFrameLevel(topBar:GetFrameLevel() + 2)
     UIDropDownMenu_SetWidth(plannerFrame.filterDD, 130)
 
     local leftX, topY = 12, -74
@@ -800,6 +836,16 @@ function RP:EnsurePlannerFrame()
         plannerFrame.rightHeaderSF:SetHorizontalScroll(value)
     end)
 
+    -- Content-Frames bewusst unterhalb der TopBar anordnen, damit Navigation
+    -- nie von ScrollFrames/Overlays ueberdeckt wird.
+    local contentLevel = baseLevel + 10
+    leftHeader:SetFrameLevel(contentLevel)
+    plannerFrame.rightHeaderSF:SetFrameLevel(contentLevel)
+    plannerFrame.leftSF:SetFrameLevel(contentLevel)
+    plannerFrame.rightSF:SetFrameLevel(contentLevel)
+    plannerFrame.vScroll:SetFrameLevel(contentLevel + 1)
+    plannerFrame.hScroll:SetFrameLevel(contentLevel + 1)
+
     plannerFrame.rightSF:EnableMouseWheel(true)
     plannerFrame.rightHeaderSF:EnableMouseWheel(true)
 
@@ -830,20 +876,41 @@ function RP:EnsurePlannerFrame()
         ScrollHorizontal(delta)
     end)
 
-    plannerFrame.weekStartTs = DetermineInitialWeekStart()
-    plannerFrame.raidFilter = "ALL"
+    plannerFrame.weekStartTs = NormalizeWeekStartTs(DetermineInitialWeekStart())
+    plannerFrame.raidFilter = nil
     plannerFrame.hoveredPlayerName = nil
 
-    prev:SetScript("OnClick", function()
+    -- Hinweistext fuer Wochen ohne Raids
+    plannerFrame.noRaidsLabel = plannerFrame.rightContent:CreateFontString(nil, "OVERLAY", "GameFontDisable")
+    plannerFrame.noRaidsLabel:SetPoint("TOPLEFT", 12, -12)
+    plannerFrame.noRaidsLabel:SetText("")
+    plannerFrame.noRaidsLabel:Hide()
+
+    local function ChangeWeek(deltaWeeks)
         plannerFrame.userNavigatedWeek = true
-        plannerFrame.weekStartTs = plannerFrame.weekStartTs - (7 * 86400)
+        local base = plannerFrame.weekStartTs or CurrentWeekStart()
+        plannerFrame.weekStartTs = NormalizeWeekStartTs(base + (deltaWeeks * 7 * 86400))
+
+        -- Debug-Ausgabe, damit sichtbar ist, dass der Button ueberhaupt feuert
+        ADDON:Debug("Planner", "ChangeWeek deltaWeeks =", deltaWeeks, " -> weekStartTs =", date("%Y-%m-%d", plannerFrame.weekStartTs))
+        -- Beim Wochenwechsel Filter auf "Alle" setzen
+        plannerFrame.raidFilter = nil -- wird in RefreshPlannerFilterDropdownOptions passend gesetzt
+        -- Scrollpositionen zuruecksetzen
+        if plannerFrame.vScroll then plannerFrame.vScroll:SetValue(0) end
+        if plannerFrame.hScroll then plannerFrame.hScroll:SetValue(0) end
         RP:RefreshPlanner()
-    end)
-    nextB:SetScript("OnClick", function()
-        plannerFrame.userNavigatedWeek = true
-        plannerFrame.weekStartTs = plannerFrame.weekStartTs + (7 * 86400)
-        RP:RefreshPlanner()
-    end)
+    end
+
+    -- Buttons explizit fuer Klicks registrieren (robust gegen Skins/Templates)
+    plannerFrame.prevWeekBtn:EnableMouse(true)
+    plannerFrame.prevWeekBtn:RegisterForClicks("AnyUp")
+    plannerFrame.prevWeekBtn:Enable()
+    plannerFrame.prevWeekBtn:SetScript("OnClick", function() ChangeWeek(-1) end)
+
+    plannerFrame.nextWeekBtn:EnableMouse(true)
+    plannerFrame.nextWeekBtn:RegisterForClicks("AnyUp")
+    plannerFrame.nextWeekBtn:Enable()
+    plannerFrame.nextWeekBtn:SetScript("OnClick", function() ChangeWeek(1) end)
 
     RefreshPlannerFilterDropdownOptions()
 

@@ -20,11 +20,13 @@ function RDB:GetData()
             version      = 1,
             raids        = {},
             deletedRaids = {},
+            logs         = {},
         }
     end
     local rp = profile.raidplaner
     if not rp.raids        then rp.raids        = {} end
     if not rp.deletedRaids then rp.deletedRaids = {} end
+    if not rp.logs         then rp.logs         = {} end
     return rp
 end
 
@@ -126,6 +128,35 @@ function RDB:CleanupDeletions()
             data.deletedRaids[id] = nil
         end
     end
+end
+
+---------------------------------------------------------------------------
+-- Logs – einfache Ereignis-Historie (Raid angelegt, geloescht, Anmeldungen)
+---------------------------------------------------------------------------
+
+--- Fuegt einen Logeintrag hinzu.
+-- @param text  Freiform-Text (bereits lokalisiert)
+function RDB:AddLog(text)
+    local data = self:GetData()
+    if not data or not text or text == "" then return end
+    data.logs = data.logs or {}
+    -- Neueste Eintraege wie beim GuildStockPlanner-Log immer OBEN einsortieren
+    table.insert(data.logs, 1, {
+        ts   = time(),
+        text = text,
+    })
+
+    -- Begrenzung: aeltere Eintraege am ENDE entfernen
+    while #data.logs > 500 do
+        table.remove(data.logs)
+    end
+end
+
+--- Gibt alle Logs als Array (neueste zuerst, wie gespeichert) zurueck.
+function RDB:GetLogs()
+    local data = self:GetData()
+    if not data then return {} end
+    return data.logs or {}
 end
 
 ---------------------------------------------------------------------------

@@ -5,7 +5,9 @@
 ---------------------------------------------------------------------------
 local _, ADDON = ...
 
-ADDON.Raidplaner = {}
+-- Bestehendes Modul wiederverwenden statt ueberschreiben, damit Funktionen
+-- aus anderen Dateien (z.B. Planner.lua) erhalten bleiben.
+ADDON.Raidplaner = ADDON.Raidplaner or {}
 local RP = ADDON.Raidplaner
 local THEME = ADDON.UITheme
 
@@ -62,6 +64,7 @@ local rpFrame, contentInset, calendarContent
 local monthLabel
 local dayCells = {}
 local currentYear, currentMonth
+local logFrame, logRows = nil, {}
 -- Dialog + Detail als oeffentliche Refs (fuer Sync-Refresh)
 RP.detailFrame = nil
 
@@ -117,6 +120,162 @@ local function CreateEB(parent, w, h)
     eb:SetScript("OnEnterPressed",  function(s) s:ClearFocus() end)
     return eb
 end
+
+---------------------------------------------------------------------------
+-- Log-Fenster
+---------------------------------------------------------------------------
+
+local function GetOrCreateLogRow(index, parent)
+    if logRows[index] then return logRows[index] end
+
+    local row = CreateFrame("Frame", nil, parent, "BackdropTemplate")
+    row:SetHeight(ROW_H)
+
+    -- Abwechselnde Hintergruende wie im GuildStockPlanner-Log
+    row.bg = row:CreateTexture(nil, "BACKGROUND")
+    row.bg:SetAllPoints()
+    row.bg:SetColorTexture(0, 0, 0, 0)
+
+    row.timeText = CreateLabel(row, "GameFontHighlightSmall", nil, "LEFT", 8, 0)
+    row.timeText:SetWidth(96)
+    row.timeText:SetJustifyH("LEFT")
+
+    row.msgText = CreateLabel(row, "GameFontNormalSmall", nil, "LEFT", 110, 0)
+    row.msgText:SetWidth(520)
+    row.msgText:SetJustifyH("LEFT")
+
+    logRows[index] = row
+    return row
+end
+
+function RP:EnsureLogFrame()
+    if logFrame then return end
+
+    logFrame = CreateFrame("Frame", "GASRPRaidLogs", UIParent, "BackdropTemplate")
+    logFrame:SetSize(740, 420)
+    logFrame:SetPoint("CENTER")
+    logFrame:SetFrameStrata("DIALOG")
+    ApplyBackdrop(logFrame, BD_MAIN, 0.05, 0.05, 0.08, 0.97, 0.5, 0.5, 0.5)
+    MakeMovable(logFrame)
+    logFrame:Hide()
+
+    local cb = CreateFrame("Button", nil, logFrame, "UIPanelCloseButton")
+    cb:SetPoint("TOPRIGHT", -2, -2)
+
+    CreateLabel(logFrame, "GameFontNormalLarge", "|cffff8800GAS|r Raid-Logs", "TOPLEFT", 16, -14)
+
+    -- Info-Zeile oben (Anzahl Eintraege)
+    logFrame.infoText = CreateLabel(logFrame, "GameFontNormalSmall", "", "TOPLEFT", 16, -40)
+    logFrame.infoText:SetWidth(420)
+    logFrame.infoText:SetJustifyH("LEFT")
+
+    -- ScrollFrame im gleichen Stil wie GuildStockPlanner-Sync-Log
+    local sf = CreateFrame("ScrollFrame", "GASRPLogScroll", logFrame, "UIPanelScrollFrameTemplate")
+    sf:SetPoint("TOPLEFT", 10, -64)
+    sf:SetPoint("BOTTOMRIGHT", -30, 14)
+    logFrame.scroll = sf
+
+    local content = CreateFrame("Frame", nil, sf)
+    content:SetPoint("TOPLEFT", 0, 0)
+    content:SetWidth(700)
+    content:SetHeight(1)
+    sf:SetScrollChild(content)
+    logFrame.content = content
+end
+
+function RP:RefreshLogs()
+    if not logFrame then return end
+    local logs = ADDON.RaidplanerDB:GetLogs()
+
+    -- Info-Zeile (Anzahl Eintraege)
+    if logFrame.infoText then
+        logFrame.infoText:SetText(string.format(
+            "Raid-Logs: |cffffd100%d|r Eintr\u00e4ge (neueste oben)",
+            #logs
+        ))
+    end
+
+    local y = 0
+    local used = 0
+    for i, entry in ipairs(logs) do
+        used = used + 1
+        local row = GetOrCreateLogRow(used, logFrame.content)
+        row:ClearAllPoints()
+        row:SetPoint("TOPLEFT", 0, -((used - 1) * ROW_H))
+        row:SetPoint("TOPRIGHT", 0, -((used - 1) * ROW_H))
+
+        row.bg:SetColorTexture(0, 0, 0, (used % 2 == 0) and 0.20 or 0.10)
+
+        local ts = entry.ts or time()
+        row.timeText:SetText("|cffaaaaaa" .. date("%d.%m. %H:%M", ts) .. "|r")
+        row.msgText:SetText(entry.text or "")
+
+        row:Show()
+        y = y + ROW_H
+    end
+
+    for i = used + 1, #logRows do
+        if logRows[i] then logRows[i]:Hide() end
+    end
+
+    logFrame.content:SetHeight(math.max(1, y))
+    if logFrame.scroll.UpdateScrollChildRect then
+        logFrame.scroll:UpdateScrollChildRect()
+    end
+end
+
+function RP:ToggleLogs()
+    self:EnsureLogFrame()
+    if logFrame:IsShown() then
+        logFrame:Hide()
+        return
+    end
+    self:RefreshLogs()
+    logFrame:Show()
+end
+
+---------------------------------------------------------------------------
+-- Zeit-Formatierung (von/bis) fuer Kalender & Tooltips
+---------------------------------------------------------------------------
+
+local function FormatRaidTimeRange(timeStr)
+    if not timeStr or timeStr == "" then
+        return "?", "?"
+    end
+
+    -- Neuer Standard: "HH:MM-HH:MM"
+    local fh, fm, th, tm = timeStr:match("^(%d%d):(%d%d)%-(%d%d):(%d%d)$")
+    if fh and fm and th and tm then
+        local fromText = string.format("%02d:%02d", tonumber(fh) or 0, tonumber(fm) or 0)
+        local toText   = string.format("%02d:%02d", tonumber(th) or 0, tonumber(tm) or 0)
+        return fromText, toText
+    end
+
+    -- Fallback: nur Startzeit "HH:MM"
+    local sh, sm = timeStr:match("^(%d%d):(%d%d)$")
+    if sh and sm then
+        local fromText = string.format("%02d:%02d", tonumber(sh) or 0, tonumber(sm) or 0)
+        return fromText, nil
+    end
+
+    -- Legacy-Format: z.B. "0020", "2000" → HHMM
+    local digits = timeStr:match("^(%d%d%d?%d?)$")
+    if digits and #digits >= 3 then
+        local len   = #digits
+        local mins  = tonumber(digits:sub(len - 1, len)) or 0
+        local hours = tonumber(digits:sub(1, len - 2)) or 0
+        if hours >= 0 and hours <= 23 and mins >= 0 and mins <= 59 then
+            local fromText = string.format("%02d:%02d", hours, mins)
+            return fromText, nil
+        end
+    end
+
+    -- Letzter Fallback: String unveraendert
+    return timeStr, nil
+end
+
+-- Exponiere die Zeit-Formatierung fuer andere Raidplaner-Module (z.B. State.lua)
+ADDON.Raidplaner.FormatRaidTimeRange = FormatRaidTimeRange
 
 ---------------------------------------------------------------------------
 -- Kalender-Mathematik
@@ -299,8 +458,15 @@ function RP:RefreshCalendar()
                 local sh  = def and def.short or r.raidKey
                 local sz  = r.size or (def and def.size) or ""
 
+                -- Zeitbereich "von/bis" anzeigen
+                local fromText, toText = FormatRaidTimeRange(r.time or "")
+                local timeLabel = fromText
+                if toText and toText ~= "" then
+                    timeLabel = fromText .. "-" .. toText
+                end
+
                 -- Status / Farbe bestimmen
-                local baseText = (r.time or "?") .. " " .. sh .. " (" .. sz .. ")"
+                local baseText = timeLabel .. " " .. sh .. " (" .. sz .. ")"
                 local color    = "ffffd100" -- Standard: gelb (geplant)
 
                 -- Vergangene Raids: grau
@@ -343,7 +509,12 @@ function RP:RefreshCalendar()
                     local signupCount = 0
                     if r.signups then for _ in pairs(r.signups) do signupCount = signupCount + 1 end end
                     GameTooltip:AddLine((def and def.name or r.raidKey) .. " (" .. sz .. ")", 1, 0.82, 0)
-                    GameTooltip:AddLine(r.date .. " um " .. (r.time or "?") .. " Uhr", 1, 1, 1)
+                    local tf, tt = FormatRaidTimeRange(r.time or "")
+                    local tooltipTime = tf
+                    if tt and tt ~= "" then
+                        tooltipTime = tf .. " - " .. tt
+                    end
+                    GameTooltip:AddLine(r.date .. " von " .. tooltipTime .. " Uhr", 1, 1, 1)
                     if r.note and r.note ~= "" then
                         GameTooltip:AddLine(r.note, 0.7, 0.7, 0.7, true)
                     end
@@ -525,6 +696,8 @@ function RP:SaveRaidFromDialog()
     local now  = time()
     local raid
 
+    local actor = UnitName("player") or "?"
+
     if createFrame.editingRaidId then
         raid = ADDON.RaidplanerDB:GetRaid(createFrame.editingRaidId)
         if raid then
@@ -557,6 +730,27 @@ function RP:SaveRaidFromDialog()
 
     ADDON.RaidplanerDB:SaveRaid(raid)
     ADDON.RaidplanerSync:BroadcastRaid(raid)
+
+    -- Log-Eintrag
+    local logText
+    if createFrame.editingRaidId then
+        logText = string.format(
+            "%s hat den Raid \"%s\" am %s (%s) bearbeitet.",
+            actor,
+            raid.raidName or raid.raidKey or "?",
+            raid.date or "?",
+            raid.time or "?"
+        )
+    else
+        logText = string.format(
+            "%s hat einen Raid \"%s\" am %s (%s) angelegt.",
+            actor,
+            raid.raidName or raid.raidKey or "?",
+            raid.date or "?",
+            raid.time or "?"
+        )
+    end
+    ADDON.RaidplanerDB:AddLog(logText)
     ADDON:Print("Raid gespeichert: " .. (raid.raidName or "?") .. " am " .. dateStr)
     createFrame:Hide()
     self:RefreshCalendar()
@@ -827,13 +1021,13 @@ local function EnsureDetailView()
 
     -- Signup-Buttons
     local btnY = -124
-    df.yesBtn   = CreateBtn(df, 78, 24, "Dabei",      function() RP:HandleSignup("YES")   end)
+    df.yesBtn   = CreateBtn(df, 90, 24, "Dabei",      function() RP:HandleSignup("YES")   end)
     df.yesBtn:SetPoint("TOPLEFT", 16, btnY)
-    df.maybeBtn = CreateBtn(df, 78, 24, "Vielleicht", function() RP:HandleSignup("MAYBE") end)
+    df.maybeBtn = CreateBtn(df, 90, 24, "Vielleicht", function() RP:HandleSignup("MAYBE") end)
     df.maybeBtn:SetPoint("LEFT", df.yesBtn, "RIGHT", 4, 0)
-    df.noBtn    = CreateBtn(df, 78, 24, "Abwesend",   function() RP:HandleSignup("NO")    end)
+    df.noBtn    = CreateBtn(df, 90, 24, "Abwesend",   function() RP:HandleSignup("NO")    end)
     df.noBtn:SetPoint("LEFT", df.maybeBtn, "RIGHT", 4, 0)
-    df.benchBtn = CreateBtn(df, 78, 24, "Reserve",    function() RP:HandleSignup("BENCH") end)
+    df.benchBtn = CreateBtn(df, 90, 24, "Reserve",    function() RP:HandleSignup("BENCH") end)
     df.benchBtn:SetPoint("LEFT", df.noBtn, "RIGHT", 4, 0)
 
     -- Kommentar
@@ -978,6 +1172,14 @@ function RP:ShowRaidDetail(raidId)
         (raid.note and raid.note ~= "") and ("|cffaaaaaa" .. raid.note .. "|r") or "")
     df.creatorLabel:SetText("|cffaaaaaaErstellt von: " .. (raid.createdBy or "?") .. "|r")
 
+    -- Anmelde-Buttons vereinfachen:
+    -- Immer nur "Anmelden" / "Abmelden" anzeigen, unabhaengig von Berechtigungen.
+    local canManage = self:CanManageRaids()
+    df.yesBtn:SetText("Anmelden")
+    df.noBtn:SetText("Abmelden")
+    df.maybeBtn:Hide()
+    df.benchBtn:Hide()
+
     -- Spec-Dropdown initialisieren
     local _, classToken = UnitClass("player")
     local myName   = UnitName("player")
@@ -998,10 +1200,11 @@ function RP:ShowRaidDetail(raidId)
         df.commentEB:SetText("")
     end
 
-    -- Bearbeiten / Loeschen
-    local canManage = self:CanManageRaids()
+    -- Bearbeiten / Loeschen + Raidstatus-Buttons nur fuer Berechtigte
     df.editBtn:SetShown(canManage)
     df.deleteBtn:SetShown(canManage)
+    df.confirmRaidBtn:SetShown(canManage)
+    df.cancelRaidBtn:SetShown(canManage)
 
     self:RefreshRoster(raidId)
     df:Show()
@@ -1294,6 +1497,22 @@ function RP:HandleSignup(status)
 
     ADDON.RaidplanerSync:BroadcastSignup(raidId, signup)
 
+    -- Log-Eintrag
+    local raidLabel = (raid.raidName or raid.raidKey or "?") .. " am " .. (raid.date or "?")
+    local timeLabelFrom, timeLabelTo = FormatRaidTimeRange(raid.time or "")
+    local timeLabel = timeLabelFrom
+    if timeLabelTo and timeLabelTo ~= "" then
+        timeLabel = timeLabelFrom .. " - " .. timeLabelTo
+    end
+    local logText = string.format(
+        "%s hat sich f\u00fcr %s (%s) mit Status \"%s\" angemeldet.",
+        myName or "?",
+        raidLabel,
+        timeLabel or "?",
+        STATUS_LABEL[status] or status
+    )
+    ADDON.RaidplanerDB:AddLog(logText)
+
     local specInfo = ADDON.RaidData:GetSpecInfo(classToken, specKey)
     local specStr  = specInfo and (" als " .. specInfo.name) or ""
     ADDON:Print("Angemeldet: " .. (STATUS_LABEL[status] or status) .. specStr)
@@ -1311,6 +1530,23 @@ function RP:SetSignupStatus(raidId, playerName, newStatus)
     s.updatedAt = time()
 
     ADDON.RaidplanerSync:BroadcastSignup(raidId, s)
+
+    -- Log-Eintrag
+    local raidLabel = (raid.raidName or raid.raidKey or "?") .. " am " .. (raid.date or "?")
+    local fromText, toText = FormatRaidTimeRange(raid.time or "")
+    local timeLabel = fromText
+    if toText and toText ~= "" then
+        timeLabel = fromText .. " - " .. toText
+    end
+    local logText = string.format(
+        "%s hat den Status von %s f\u00fcr %s (%s) auf \"%s\" gesetzt.",
+        UnitName("player") or "?",
+        playerName or "?",
+        raidLabel,
+        timeLabel or "?",
+        STATUS_LABEL[newStatus] or newStatus
+    )
+    ADDON.RaidplanerDB:AddLog(logText)
     self:RefreshRoster(raidId)
 end
 
@@ -1324,6 +1560,21 @@ function RP:UnsetFromRoster(raidId, playerName)
     s.updatedAt = time()
 
     ADDON.RaidplanerSync:BroadcastSignup(raidId, s)
+
+    -- Log-Eintrag
+    local raidLabel = (raid.raidName or raid.raidKey or "?") .. " am " .. (raid.date or "?")
+    local fromText, toText = FormatRaidTimeRange(raid.time or "")
+    local timeLabel = fromText
+    if toText and toText ~= "" then
+        timeLabel = fromText .. " - " .. toText
+    end
+    local logText = string.format(
+        "%s wurde von %s (%s) aus dem Kader entfernt und ist wieder nur angemeldet.",
+        playerName or "?",
+        raidLabel,
+        timeLabel or "?"
+    )
+    ADDON.RaidplanerDB:AddLog(logText)
     self:RefreshRoster(raidId)
 end
 
@@ -1345,9 +1596,23 @@ function RP:ConfirmDeleteRaid(raidId)
         button1  = "Ja",
         button2  = "Nein",
         OnAccept = function()
+            local actor = UnitName("player") or "?"
+            local label = (raid.raidName or raid.raidKey or "?") .. " am " .. (raid.date or "?")
+            local fromText, toText = FormatRaidTimeRange(raid.time or "")
+            local timeLabel = fromText
+            if toText and toText ~= "" then
+                timeLabel = fromText .. " - " .. toText
+            end
             ADDON.RaidplanerDB:DeleteRaid(raidId)
             ADDON.RaidplanerSync:BroadcastDelete(raidId)
             ADDON:Print("Raid geloescht.")
+            local logText = string.format(
+                "%s hat den Raid \"%s\" (%s) geloescht.",
+                actor,
+                label,
+                timeLabel or "?"
+            )
+            ADDON.RaidplanerDB:AddLog(logText)
             if RP.detailFrame then RP.detailFrame:Hide() end
             RP:RefreshCalendar()
         end,
@@ -1429,6 +1694,12 @@ function RP:Init()
     plannerBtn:SetPoint("LEFT", todayBtn, "RIGHT", 8, 0)
     plannerBtn:SetShown(self:CanManageRaids())
     self.plannerBtn = plannerBtn
+
+    -- Logs-Button (fuer alle sichtbar)
+    local logsBtn = CreateBtn(rpFrame, 70, 24, "Logs", function()
+        RP:ToggleLogs()
+    end)
+    logsBtn:SetPoint("LEFT", plannerBtn, "RIGHT", 8, 0)
 
     -- Content Inset
     contentInset = CreateFrame("Frame", nil, rpFrame, "BackdropTemplate")

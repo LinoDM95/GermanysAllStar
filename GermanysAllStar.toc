@@ -5,18 +5,34 @@
 ## Version: 2.0.0
 ## SavedVariables: GermanysAllStarDB GuildStockPlannerDB
 
+# ----------------------------------------------------
+# Core & Hub
+# ----------------------------------------------------
 Core.lua
 HubUI.lua
+
+# ----------------------------------------------------
+# GuildStockPlanner (Gildenbank / Rezepte)
+# ----------------------------------------------------
 GuildStockPlanner\DB.lua
 GuildStockPlanner\Scanner.lua
 GuildStockPlanner\Calculator.lua
 GuildStockPlanner\ExportImport.lua
 GuildStockPlanner\Sync.lua
 GuildStockPlanner\UI.lua
+
+# ----------------------------------------------------
+# Raidplaner (Kalender, Raids, Roster)
+# ----------------------------------------------------
 Raidplaner\RaidData.lua
 Raidplaner\DB.lua
 Raidplaner\Sync.lua
 Raidplaner\UITheme.lua
 Raidplaner\UI.lua
 Raidplaner\Planner.lua
+Raidplaner\State.lua
+
+# ----------------------------------------------------
+# GuildStocks (Bestands-UI, optional)
+# ----------------------------------------------------
 GuildStocks\UI.lua
